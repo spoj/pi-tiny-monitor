@@ -1,0 +1,14 @@
+{
+  "name": "pi-tiny-monitor",
+  "version": "0.1.0",
+  "description": "Minimal session-scoped background process monitors for Pi",
+  "type": "module",
+  "license": "MIT",
+  "files": ["README.md", "extensions"],
+  "keywords": ["pi-package"],
+  "pi": { "extensions": ["./extensions/monitor.ts"] },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  }
+}
