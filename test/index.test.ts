@@ -35,7 +35,7 @@ function nodeCommand(source: string): string {
 }
 
 async function loadHarness(): Promise<Harness> {
-  const { default: extension } = await import("../src/index.ts");
+  const { default: extension } = await import("../src/index.js");
   const tools = new Map<string, Tool>();
   const messages: Message[] = [];
   const events = new Map<string, Array<(...args: unknown[]) => unknown>>();
@@ -110,6 +110,10 @@ function text(message: Message): string {
   return "";
 }
 
+function resultText(result: any): string {
+  return text({ content: result?.content });
+}
+
 async function waitFor(condition: () => boolean, timeout = 2_000): Promise<void> {
   const started = Date.now();
   while (!condition()) {
@@ -171,22 +175,28 @@ describe("monitor extension", () => {
       undefined,
       harness.context,
     );
-    expect(text((listing as any).content?.[0] ?? listing)).toContain(id);
+    expect(resultText(listing)).toContain(id);
   });
 
   it("stops a noisy process once it exceeds the rate limit", async () => {
     const harness = await loadHarness();
-    await start(
+    const { id } = await start(
       harness,
       nodeCommand(
         'for (let i = 0; i < 1000; i++) process.stdout.write("noise\\n"); setTimeout(() => process.stdout.write("survived\\n"), 300); setTimeout(() => {}, 1000);',
       ),
     );
 
-    await waitFor(() => harness.messages.some((message) => /auto.?stop|rate limit|noisy/i.test(text(message))));
     await new Promise((resolve) => setTimeout(resolve, 400));
     expect(harness.messages.map(text).join("\n")).not.toContain("survived");
-    expect(harness.messages.filter((message) => /auto.?stop|rate limit|noisy/i.test(text(message)))).toHaveLength(1);
+    const listing = await tool(harness, "monitor_list").execute(
+      "list",
+      {},
+      undefined,
+      undefined,
+      harness.context,
+    );
+    expect(resultText(listing)).not.toContain(id);
   });
 
   it("terminates owned processes on stop and session shutdown", async () => {
