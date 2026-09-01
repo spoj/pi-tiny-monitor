@@ -105,8 +105,9 @@ export default function tinyMonitor(pi: ExtensionAPI): void {
 				resolve();
 			};
 			record.child.once("close", done);
-			kill(record.child, "SIGTERM");
-			killTimer = setTimeout(() => kill(record.child, "SIGKILL"), KILL_GRACE_MS);
+			record.child.kill("SIGTERM");
+			record.child.stdout?.destroy();
+			killTimer = setTimeout(() => record.child.kill("SIGKILL"), KILL_GRACE_MS);
 			killTimer.unref();
 		});
 		return record.stopPromise;
@@ -125,7 +126,6 @@ export default function tinyMonitor(pi: ExtensionAPI): void {
 			const [shell, args] = shellCommand(command);
 			const child = spawn(shell, args, {
 				cwd: ctx.cwd,
-				detached: process.platform !== "win32",
 				stdio: ["ignore", "pipe", "ignore"],
 				windowsHide: true,
 			});
@@ -160,7 +160,6 @@ export default function tinyMonitor(pi: ExtensionAPI): void {
 				shell,
 				cwd: ctx.cwd,
 				startedAt,
-				processGroupId: process.platform === "win32" ? null : child.pid ?? null,
 			};
 			return {
 				content: [{ type: "text", text: JSON.stringify(details) }],
@@ -220,14 +219,4 @@ function shellCommand(command: string): [string, string[]] {
 	return process.platform === "win32"
 		? [process.env.ComSpec ?? "cmd.exe", ["/d", "/s", "/c", command]]
 		: [process.env.SHELL ?? "/bin/sh", ["-c", command]];
-}
-
-function kill(child: ChildProcess, signal: NodeJS.Signals): void {
-	if (!child.pid) return;
-	try {
-		if (process.platform === "win32") child.kill(signal);
-		else process.kill(-child.pid, signal);
-	} catch {
-		child.kill(signal);
-	}
 }
