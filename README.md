@@ -1,31 +1,70 @@
 # pi-tiny-monitor
 
-Minimal session-scoped background processes for Pi.
+Implementation handoff for a deliberately small Pi extension that turns a background process's stdout into session wake-ups.
 
-## Contract
+This repository is a scaffold, not a working extension yet.
 
-- `monitor_start` runs a shell command in the current `ctx.cwd` and returns an ID.
-- Complete stdout lines are subscribed to while the process runs.
-- Lines arriving within 200ms are delivered as one follow-up message.
-- More than 50 lines/sec over a 10-second window stops that monitor.
-- `monitor_stop` kills the process group; `monitor_list` reports active jobs.
-- All processes stop when the Pi session shuts down.
-- There is no persistence, stderr reader, timeout, PTY, file watcher, or process recovery. Use `tee`, pipes, or shell redirection when output should be retained.
+## Required model-facing surface
 
-Messages use `pi.sendMessage()` with `deliverAs: "followUp"` and `triggerTurn: true`. Output is external process data; callers should filter it in the shell when appropriate:
+- `monitor({ description, command })` starts a process and returns its ID immediately.
+- `monitor_stop({ id })` stops one running process.
+- `monitor_list()` lists running processes.
 
-```sh
-npm run dev 2>&1 | grep --line-buffered -E 'error|ready'
-```
+No other tools or slash commands.
 
-## Install
+## Required behavior
 
-```sh
-pi install /home/spoj/pi-tiny-monitor
-```
+- Run the command through the user's shell in `ctx.cwd`.
+- Keep an in-memory map of session-owned processes.
+- Subscribe to stdout and split it into complete lines without corrupting UTF-8 across chunks.
+- Flush a final unterminated line when stdout closes.
+- Coalesce lines using a fixed 200 ms debounce window.
+- Deliver each batch with `pi.sendMessage(..., { deliverAs: "steer", triggerTurn: true })`.
+- Apply a fixed sliding-window rate limit. Stop a process that sustains more than 50 lines/second over 10 seconds and send one final explanation.
+- Stop all owned processes during `session_shutdown`.
+- Limit concurrent processes to 8.
+- Use SIGTERM followed by SIGKILL after a short fixed grace period.
 
-The package is intentionally a sibling of `pi-tiny-fork`: the fork owns bidirectional Pi RPC processes, while this package owns one-way shell output subscriptions. A fresh Pi can be launched through `monitor_start`; its stdout is then handled like any other command output.
+## Deliberate non-goals
 
-## Development
+- Output or state persistence.
+- Capturing or reading stderr. Callers can use `2>&1` when stderr should be monitored.
+- Logging. Callers can use `tee` or redirect to a file.
+- Regex or substring filtering. Callers can use `grep --line-buffered` or `awk`.
+- Timeouts, retries, polling, scheduling, PTYs, tmux, process recovery, or restart reconciliation.
+- Custom UI, widgets, renderers, flags, settings, and slash commands.
+- Fresh-agent or RPC semantics. `pi -p "task"` is just another command a monitor may run.
 
-The implementation is `extensions/monitor.ts`. It uses only Pi's `ExtensionAPI`, `ExtensionContext`, `pi.registerTool()`, `pi.sendMessage()`, and `session_shutdown`, plus Node's `child_process.spawn()`.
+## Implementation shape
+
+Keep it in `src/index.ts` unless a pure helper is independently worth testing. The expected state is one `Map<string, ProcessRecord>` captured by the extension factory. A record only needs identity, label, child handle, coalescing state, rate-window timestamps, and stopping state.
+
+Prefer direct `node:child_process` APIs. Do not add a process library unless direct process-tree termination proves insufficient on a supported platform. Do not depend on another Pi monitor package.
+
+Only add behavior required above. In particular, do not reproduce the broader feature sets of existing monitor packages.
+
+## Pi pointers
+
+Installed Pi documentation:
+
+- `docs/extensions.md#long-lived-resources-and-shutdown`
+- `docs/extensions.md#pisendmessagemessage-options`
+- `docs/extensions.md#piexeccommand-args-options`
+- `examples/extensions/file-trigger.ts` — minimal asynchronous `sendMessage` wake-up.
+- `src/core/tools/bash.ts` — Pi's local shell execution and process-tree cleanup behavior.
+
+Useful external references, for behavior only:
+
+- `gregjohnso/pi-monitor` — stdout batching, rate limiting, and wake-up semantics.
+- `@bytetrue/pi-background-terminal` — small session-owned process manager and cleanup.
+
+Do not copy their persistence, duplicated command surfaces, UI, or compatibility machinery.
+
+## Minimum tests
+
+- Split lines across chunks, including CRLF, UTF-8 boundaries, and a final unterminated line.
+- Coalesce nearby lines and flush after 200 ms.
+- Rate limit stops a noisy process once.
+- Start returns before process completion.
+- Stop and session shutdown terminate owned processes.
+- A stdout batch calls `sendMessage` with `deliverAs: "steer"` and `triggerTurn: true`.
