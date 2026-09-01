@@ -1,174 +1,202 @@
-import { spawn, type ChildProcess } from "node:child_process";
-import { randomUUID } from "node:crypto";
-import type { Readable } from "node:stream";
+import { type ChildProcess, spawn } from "node:child_process";
+import { StringDecoder } from "node:string_decoder";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
-type MonitorRecord = {
-  id: string;
-  label: string;
-  child: ChildProcess;
-  buffer: string[];
-  flushTimer?: NodeJS.Timeout;
-  lineBuffer: string;
-  timestamps: number[];
-  stopping: boolean;
+const BATCH_WINDOW_MS = 200;
+const RATE_WINDOW_MS = 10_000;
+const RATE_LIMIT = 50 * (RATE_WINDOW_MS / 1000);
+const KILL_GRACE_MS = 2_000;
+
+type ProcessRecord = {
+	id: string;
+	command: string;
+	child: ChildProcess;
+	decoder: StringDecoder;
+	carry: string;
+	pending: string[];
+	flushTimer?: NodeJS.Timeout;
+	timestamps: number[];
+	stopping: boolean;
+	stopPromise?: Promise<void>;
 };
 
-const BATCH_DELAY_MS = 200;
-const RATE_WINDOW_MS = 10_000;
-const RATE_LIMIT = 500;
+export default function tinyMonitor(pi: ExtensionAPI): void {
+	const processes = new Map<string, ProcessRecord>();
+	let nextId = 1;
+	let active = true;
 
-function stopChild(child: ChildProcess): void {
-  if (child.pid === undefined) return;
-  if (process.platform === "win32") {
-    spawn("taskkill", ["/pid", String(child.pid), "/t", "/f"], { stdio: "ignore" });
-  } else {
-    try {
-      process.kill(-child.pid, "SIGTERM");
-    } catch {
-      child.kill("SIGTERM");
-    }
-  }
+	const flush = (record: ProcessRecord) => {
+		if (record.flushTimer) clearTimeout(record.flushTimer);
+		record.flushTimer = undefined;
+		if (!active || record.pending.length === 0) return;
+		const lines = record.pending;
+		record.pending = [];
+		pi.sendMessage(
+			{
+				customType: "tiny-monitor",
+				content: `[${record.id}]\n${lines.join("\n")}`,
+				display: true,
+				details: { id: record.id, command: record.command, lines },
+			},
+			{ deliverAs: "steer", triggerTurn: true },
+		);
+	};
+
+	const queueLine = (record: ProcessRecord, line: string) => {
+		const now = Date.now();
+		record.timestamps.push(now);
+		while (record.timestamps[0] < now - RATE_WINDOW_MS) record.timestamps.shift();
+		if (record.timestamps.length > RATE_LIMIT) {
+			record.pending = [];
+			if (record.flushTimer) clearTimeout(record.flushTimer);
+			record.flushTimer = undefined;
+			void stop(record);
+			return;
+		}
+
+		record.pending.push(line);
+		if (record.flushTimer) clearTimeout(record.flushTimer);
+		record.flushTimer = setTimeout(() => flush(record), BATCH_WINDOW_MS);
+	};
+
+	const consume = (record: ProcessRecord, text: string, final = false) => {
+		const parts = (record.carry + text).split("\n");
+		record.carry = parts.pop() ?? "";
+		for (const part of parts) queueLine(record, part.endsWith("\r") ? part.slice(0, -1) : part);
+		if (final && record.carry) {
+			queueLine(record, record.carry.endsWith("\r") ? record.carry.slice(0, -1) : record.carry);
+			record.carry = "";
+		}
+	};
+
+	function stop(record: ProcessRecord): Promise<void> {
+		if (record.stopPromise) return record.stopPromise;
+		record.stopping = true;
+		record.stopPromise = new Promise((resolve) => {
+			if (record.child.exitCode !== null || record.child.signalCode !== null) {
+				resolve();
+				return;
+			}
+
+			let killTimer: NodeJS.Timeout | undefined;
+			const done = () => {
+				if (killTimer) clearTimeout(killTimer);
+				resolve();
+			};
+			record.child.once("close", done);
+			kill(record.child, "SIGTERM");
+			killTimer = setTimeout(() => kill(record.child, "SIGKILL"), KILL_GRACE_MS);
+			killTimer.unref();
+		});
+		return record.stopPromise;
+	}
+
+	pi.registerTool({
+		name: "monitor",
+		label: "Monitor",
+		description: "Start a background shell command whose stdout wakes the session.",
+		parameters: Type.Object({
+			command: Type.String({ description: "Shell command whose stdout should be monitored." }),
+		}),
+		async execute(_toolCallId, { command }, _signal, _onUpdate, ctx) {
+			const id = `monitor_${nextId++}`;
+			const [shell, args] = shellCommand(command);
+			const child = spawn(shell, args, {
+				cwd: ctx.cwd,
+				detached: process.platform !== "win32",
+				stdio: ["ignore", "pipe", "ignore"],
+				windowsHide: true,
+			});
+			const record: ProcessRecord = {
+				id,
+				command,
+				child,
+				decoder: new StringDecoder("utf8"),
+				carry: "",
+				pending: [],
+				timestamps: [],
+				stopping: false,
+			};
+			processes.set(id, record);
+
+			child.stdout?.on("data", (chunk: Buffer) => consume(record, record.decoder.write(chunk)));
+			child.stdout?.once("end", () => {
+				consume(record, record.decoder.end(), true);
+				flush(record);
+			});
+			child.once("error", () => processes.delete(id));
+			child.once("close", () => {
+				flush(record);
+				processes.delete(id);
+			});
+
+			return {
+				content: [{ type: "text", text: `Started ${id}.` }],
+				details: { id, command, pid: child.pid },
+			};
+		},
+	});
+
+	pi.registerTool({
+		name: "monitor_stop",
+		label: "Monitor Stop",
+		description: "Stop one running background monitor.",
+		parameters: Type.Object({ id: Type.String({ description: "Monitor ID." }) }),
+		async execute(_toolCallId, { id }) {
+			const record = processes.get(id);
+			if (!record) throw new Error(`Unknown monitor: ${id}`);
+			flush(record);
+			await stop(record);
+			return { content: [{ type: "text", text: `Stopped ${id}.` }], details: { id } };
+		},
+	});
+
+	pi.registerTool({
+		name: "monitor_list",
+		label: "Monitor List",
+		description: "List running background monitors.",
+		parameters: Type.Object({}),
+		async execute() {
+			const monitors = [...processes.values()].map(({ id, command, child, stopping }) => ({
+				id,
+				command,
+				pid: child.pid,
+				stopping,
+			}));
+			return {
+				content: [{
+					type: "text",
+					text: monitors.length ? monitors.map(({ id, command }) => `${id}: ${command}`).join("\n") : "No monitors running.",
+				}],
+				details: { monitors },
+			};
+		},
+	});
+
+	pi.on("session_shutdown", async () => {
+		active = false;
+		for (const record of processes.values()) {
+			if (record.flushTimer) clearTimeout(record.flushTimer);
+			record.pending = [];
+		}
+		await Promise.all([...processes.values()].map(stop));
+		processes.clear();
+	});
 }
 
-function result(text: string, details: Record<string, unknown> = {}) {
-  return { content: [{ type: "text" as const, text }], details };
+function shellCommand(command: string): [string, string[]] {
+	return process.platform === "win32"
+		? [process.env.ComSpec ?? "cmd.exe", ["/d", "/s", "/c", command]]
+		: [process.env.SHELL ?? "/bin/sh", ["-c", command]];
 }
 
-export default function (pi: ExtensionAPI) {
-  const monitors = new Map<string, MonitorRecord>();
-
-  const flush = (record: MonitorRecord) => {
-    if (record.flushTimer) {
-      clearTimeout(record.flushTimer);
-      record.flushTimer = undefined;
-    }
-    if (record.buffer.length === 0) return;
-    const lines = record.buffer.splice(0);
-    pi.sendMessage(
-      {
-        customType: "monitor",
-        content: `[${record.label}]\n${lines.join("\n")}`,
-        display: true,
-        details: { id: record.id, lines },
-      },
-      { deliverAs: "steer", triggerTurn: true },
-    );
-  };
-
-  const scheduleFlush = (record: MonitorRecord) => {
-    if (!record.flushTimer) {
-      record.flushTimer = setTimeout(() => flush(record), BATCH_DELAY_MS);
-    }
-  };
-
-  const stop = (record: MonitorRecord) => {
-    if (record.stopping) return;
-    record.stopping = true;
-    flush(record);
-    stopChild(record.child);
-    monitors.delete(record.id);
-  };
-
-  const addLine = (record: MonitorRecord, line: string) => {
-    const now = Date.now();
-    record.timestamps.push(now);
-    while (record.timestamps[0] !== undefined && now - record.timestamps[0] >= RATE_WINDOW_MS) {
-      record.timestamps.shift();
-    }
-    if (record.timestamps.length > RATE_LIMIT) {
-      stop(record);
-      return;
-    }
-    record.buffer.push(line);
-    scheduleFlush(record);
-  };
-
-  const consume = (record: MonitorRecord, chunk: string) => {
-    record.lineBuffer += chunk;
-    const lines = record.lineBuffer.split("\n");
-    record.lineBuffer = lines.pop() ?? "";
-    for (const line of lines) addLine(record, line.endsWith("\r") ? line.slice(0, -1) : line);
-  };
-
-  const start = (command: string, cwd: string): string => {
-    const id = randomUUID().slice(0, 8);
-    const child = spawn(command, {
-      cwd,
-      shell: true,
-      detached: process.platform !== "win32",
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-    const record: MonitorRecord = {
-      id,
-      label: command,
-      child,
-      buffer: [],
-      lineBuffer: "",
-      timestamps: [],
-      stopping: false,
-    };
-    monitors.set(id, record);
-
-    const stdout = child.stdout as Readable | null;
-    stdout?.setEncoding("utf8");
-    stdout?.on("data", (chunk: string) => consume(record, chunk));
-    child.once("error", () => {
-      if (record.lineBuffer) addLine(record, record.lineBuffer);
-      record.lineBuffer = "";
-      flush(record);
-      monitors.delete(id);
-    });
-    child.once("close", () => {
-      if (record.lineBuffer) addLine(record, record.lineBuffer);
-      record.lineBuffer = "";
-      flush(record);
-      monitors.delete(id);
-    });
-    return id;
-  };
-
-  pi.registerTool({
-    name: "monitor",
-    label: "Monitor",
-    description: "Start a background shell process and deliver its stdout lines to the session.",
-    parameters: Type.Object({ command: Type.String() }),
-    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const id = start(params.command, ctx.cwd);
-      return result(`Started monitor ${id}: ${params.command}`, { id, command: params.command });
-    },
-  });
-
-  pi.registerTool({
-    name: "monitor_stop",
-    label: "Stop Monitor",
-    description: "Stop one running background monitor by ID.",
-    parameters: Type.Object({ id: Type.String() }),
-    async execute(_toolCallId, params) {
-      const record = monitors.get(params.id);
-      if (!record) return result(`Monitor not found: ${params.id}`, { id: params.id, stopped: false });
-      stop(record);
-      return result(`Stopped monitor ${params.id}`, { id: params.id, stopped: true });
-    },
-  });
-
-  pi.registerTool({
-    name: "monitor_list",
-    label: "List Monitors",
-    description: "List running background monitors.",
-    parameters: Type.Object({}),
-    async execute() {
-      const items = [...monitors.values()].map(({ id, label }) => ({ id, command: label }));
-      return result(
-        items.length === 0 ? "No running monitors." : items.map((item) => `${item.id}: ${item.command}`).join("\n"),
-        { monitors: items },
-      );
-    },
-  });
-
-  pi.on("session_shutdown", async () => {
-    for (const record of [...monitors.values()]) stop(record);
-    monitors.clear();
-  });
+function kill(child: ChildProcess, signal: NodeJS.Signals): void {
+	if (!child.pid) return;
+	try {
+		if (process.platform === "win32") child.kill(signal);
+		else process.kill(-child.pid, signal);
+	} catch {
+		child.kill(signal);
+	}
 }

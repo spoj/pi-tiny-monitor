@@ -3,11 +3,15 @@
   "version": "0.1.0",
   "private": true,
   "description": "Minimal stdout-driven background process monitor for Pi",
+  "type": "module",
+  "keywords": ["pi-package"],
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
   "pi": {
     "extensions": ["./src/index.ts"]
   },
-  "type": "module",
-  "keywords": ["pi-package"],
   "license": "MIT",
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
