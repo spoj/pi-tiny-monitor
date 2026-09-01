@@ -6,24 +6,11 @@ This repository is a scaffold, not a working extension yet.
 
 ## Required model-facing surface
 
-- `monitor({ description, command })` starts a process and returns its ID immediately.
+- `monitor({ command })` starts a process and returns its ID immediately.
 - `monitor_stop({ id })` stops one running process.
 - `monitor_list()` lists running processes.
 
 No other tools or slash commands.
-
-## Required behavior
-
-- Run the command through the user's shell in `ctx.cwd`.
-- Keep an in-memory map of session-owned processes.
-- Subscribe to stdout and split it into complete lines without corrupting UTF-8 across chunks.
-- Flush a final unterminated line when stdout closes.
-- Coalesce lines using a fixed 200 ms debounce window.
-- Deliver each batch with `pi.sendMessage(..., { deliverAs: "steer", triggerTurn: true })`.
-- Apply a fixed sliding-window rate limit. Stop a process that sustains more than 50 lines/second over 10 seconds and send one final explanation.
-- Stop all owned processes during `session_shutdown`.
-- Limit concurrent processes to 8.
-- Use SIGTERM followed by SIGKILL after a short fixed grace period.
 
 ## Deliberate non-goals
 
