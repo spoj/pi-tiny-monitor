@@ -1,12 +1,22 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
+import type {
+	AgentToolUpdateCallback,
+	ExtensionAPI,
+	ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
+import { Static, Type } from "typebox";
 
 const BATCH_WINDOW_MS = 200;
 const RATE_WINDOW_MS = 10_000;
 const RATE_LIMIT = 50 * (RATE_WINDOW_MS / 1000);
-const KILL_GRACE_MS = 2_000;
+const MAX_PROCESSES = 8;
+const KILL_GRACE_MS = 1_000;
+
+const monitorSchema = Type.Object({
+	command: Type.String({ description: "Shell command whose stdout should be monitored." }),
+});
+type MonitorInput = Static<typeof monitorSchema>;
 
 type ProcessRecord = {
 	id: string;
@@ -44,6 +54,7 @@ export default function tinyMonitor(pi: ExtensionAPI): void {
 	};
 
 	const queueLine = (record: ProcessRecord, line: string) => {
+		if (record.stopping) return;
 		const now = Date.now();
 		record.timestamps.push(now);
 		while (record.timestamps[0] < now - RATE_WINDOW_MS) record.timestamps.shift();
