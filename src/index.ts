@@ -51,6 +51,15 @@ export default function tinyMonitor(pi: ExtensionAPI): void {
 			record.pending = [];
 			if (record.flushTimer) clearTimeout(record.flushTimer);
 			record.flushTimer = undefined;
+			pi.sendMessage(
+				{
+					customType: "tiny-monitor",
+					content: `[${record.id}] rate limit exceeded; stopped noisy monitor.`,
+					display: true,
+					details: { id: record.id, command: record.command, rateLimited: true },
+				},
+				{ deliverAs: "steer", triggerTurn: true },
+			);
 			void stop(record);
 			return;
 		}
