@@ -121,6 +121,7 @@ export default function tinyMonitor(pi: ExtensionAPI): void {
 		}),
 		async execute(_toolCallId, { command }, _signal, _onUpdate, ctx) {
 			const id = `monitor_${nextId++}`;
+			const startedAt = new Date().toISOString();
 			const [shell, args] = shellCommand(command);
 			const child = spawn(shell, args, {
 				cwd: ctx.cwd,
@@ -151,9 +152,22 @@ export default function tinyMonitor(pi: ExtensionAPI): void {
 				processes.delete(id);
 			});
 
+			const details = {
+				id,
+				command,
+				pid: child.pid ?? null,
+				platform: process.platform,
+				shell,
+				cwd: ctx.cwd,
+				startedAt,
+				processGroupId: process.platform === "win32" ? null : child.pid ?? null,
+			};
 			return {
-				content: [{ type: "text", text: `Started ${id}.` }],
-				details: { id, command, pid: child.pid },
+				content: [{
+					type: "text",
+					text: `Started ${id} (pid=${details.pid}, platform=${details.platform}, shell=${details.shell}, cwd=${details.cwd}, startedAt=${details.startedAt}, processGroupId=${details.processGroupId ?? "n/a"}).`,
+				}],
+				details,
 			};
 		},
 	});
