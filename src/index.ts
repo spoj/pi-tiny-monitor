@@ -163,10 +163,7 @@ export default function tinyMonitor(pi: ExtensionAPI): void {
 				processGroupId: process.platform === "win32" ? null : child.pid ?? null,
 			};
 			return {
-				content: [{
-					type: "text",
-					text: `Started ${id} (pid=${details.pid}, platform=${details.platform}, shell=${details.shell}, cwd=${details.cwd}, startedAt=${details.startedAt}, processGroupId=${details.processGroupId ?? "n/a"}).`,
-				}],
+				content: [{ type: "text", text: JSON.stringify(details) }],
 				details,
 			};
 		},
