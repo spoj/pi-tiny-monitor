@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "description": "Minimal stdout-driven background process monitor for Pi",
+  "pi": {
+    "extensions": ["./src/index.ts"]
+  },
   "type": "module",
   "keywords": ["pi-package"],
   "license": "MIT",
