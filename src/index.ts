@@ -144,6 +144,7 @@ export default function tinyMonitor(pi: ExtensionAPI): void {
 			command: Type.String({ description: "Shell command whose stdout should be monitored." }),
 		}),
 		async execute(_toolCallId, { command }, _signal, _onUpdate, ctx) {
+			if (!active) throw new Error("Cannot start a monitor after session shutdown has begun.");
 			if (processes.size >= MAX_PROCESSES) {
 				throw new Error(`Maximum of ${MAX_PROCESSES} monitors already running.`);
 			}
@@ -168,17 +169,24 @@ export default function tinyMonitor(pi: ExtensionAPI): void {
 			};
 			processes.set(id, record);
 
+			const spawned = new Promise<void>((resolve, reject) => {
+				child.once("spawn", resolve);
+				child.once("error", (error) => {
+					processes.delete(id);
+					reject(error);
+				});
+			});
 			child.stdout?.on("data", (chunk: Buffer) => consume(record, record.decoder.write(chunk)));
 			child.stdout?.once("end", () => {
 				consume(record, record.decoder.end(), true);
 				flush(record);
 			});
-			child.once("error", () => processes.delete(id));
 			child.once("close", () => {
 				flush(record);
-				processes.delete(id);
+				void stop(record).finally(() => processes.delete(id));
 			});
 
+			await spawned;
 			const details = {
 				id,
 				command,

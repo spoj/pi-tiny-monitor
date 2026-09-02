@@ -207,6 +207,33 @@ describe("monitor extension", () => {
     expect(resultText(listing)).toContain(id);
   });
 
+  it("rejects starts after session shutdown begins", async () => {
+    const harness = await loadHarness();
+    await harness.shutdown();
+
+    await expect(start(harness, nodeCommand("setTimeout(() => {}, 5000);"))).rejects.toThrow(
+      "session shutdown has begun",
+    );
+  });
+
+  it("propagates asynchronous spawn failures", async () => {
+    const harness = await loadHarness();
+    const context = { ...harness.context, cwd: join(tmpdir(), `missing-${process.pid}-${Date.now()}`) };
+
+    await expect(
+      tool(harness, "monitor").execute("start", { command: "echo never" }, undefined, undefined, context),
+    ).rejects.toThrow();
+
+    const listing = await tool(harness, "monitor_list").execute(
+      "list",
+      {},
+      undefined,
+      undefined,
+      harness.context,
+    );
+    expect(resultText(listing)).toBe("No monitors running.");
+  });
+
   it("enforces the maximum number of running monitors", async () => {
     const harness = await loadHarness();
     const command = nodeCommand("setTimeout(() => {}, 5000);");
@@ -229,11 +256,10 @@ describe("monitor extension", () => {
     rmSync(marker, { force: true });
     try {
       const descendant = `process.on("SIGTERM", () => {}); const fs = require("node:fs"); setTimeout(() => fs.writeFileSync(${JSON.stringify(marker)}, "leaked"), 1500);`;
-      const source = `const { spawn } = require("node:child_process"); spawn(process.execPath, ["-e", ${JSON.stringify(descendant)}], { stdio: "inherit" }); process.stdout.write("ready\\n");`;
-      const { id } = await start(harness, nodeCommand(source));
+      const source = `const { spawn } = require("node:child_process"); const child = spawn(process.execPath, ["-e", ${JSON.stringify(descendant)}], { stdio: "ignore" }); child.unref(); process.stdout.write("ready\\n");`;
+      await start(harness, nodeCommand(source));
       await waitFor(() => harness.messages.some((message) => text(message).includes("ready")));
 
-      await stop(harness, id);
       await new Promise((resolve) => setTimeout(resolve, 1800));
       expect(existsSync(marker)).toBe(false);
     } finally {
