@@ -215,8 +215,8 @@ describe("monitor extension", () => {
     const marker = join(tmpdir(), `pi-tiny-monitor-${process.pid}-${Date.now()}.marker`);
     rmSync(marker, { force: true });
     try {
-      const descendant = `const fs = require("node:fs"); setTimeout(() => fs.writeFileSync(${JSON.stringify(marker)}, "leaked"), 500); setTimeout(() => {}, 5000);`;
-      const source = `const { spawn } = require("node:child_process"); spawn(process.execPath, ["-e", ${JSON.stringify(descendant)}], { stdio: "ignore" }); process.stdout.write("ready\\n"); setTimeout(() => {}, 5000);`;
+      const descendant = `const fs = require("node:fs"); setTimeout(() => fs.writeFileSync(${JSON.stringify(marker)}, "leaked"), 500);`;
+      const source = `const { spawn } = require("node:child_process"); spawn(process.execPath, ["-e", ${JSON.stringify(descendant)}], { stdio: "inherit" }); process.stdout.write("ready\\n");`;
       const { id } = await start(harness, nodeCommand(source));
       await waitFor(() => harness.messages.some((message) => text(message).includes("ready")));
 

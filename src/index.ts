@@ -84,20 +84,19 @@ export default function tinyMonitor(pi: ExtensionAPI): void {
 		if (record.stopPromise) return record.stopPromise;
 		record.stopping = true;
 		record.stopPromise = new Promise((resolve) => {
-			if (record.child.exitCode !== null || record.child.signalCode !== null) {
-				record.child.stdout?.destroy();
-				resolve();
-				return;
-			}
-
+			const alreadyExited = record.child.exitCode !== null || record.child.signalCode !== null;
 			let killTimer: NodeJS.Timeout | undefined;
 			const done = () => {
 				if (killTimer) clearTimeout(killTimer);
 				resolve();
 			};
-			record.child.once("close", done);
+			if (!alreadyExited) record.child.once("close", done);
 			terminateProcessTree(record.child, "SIGTERM");
 			record.child.stdout?.destroy();
+			if (alreadyExited) {
+				resolve();
+				return;
+			}
 			killTimer = setTimeout(() => terminateProcessTree(record.child, "SIGKILL"), KILL_GRACE_MS);
 			killTimer.unref();
 		});
@@ -120,6 +119,7 @@ export default function tinyMonitor(pi: ExtensionAPI): void {
 			const [shell, args] = shellCommand(command);
 			const child = spawn(shell, args, {
 				cwd: ctx.cwd,
+				detached: process.platform !== "win32",
 				stdio: ["ignore", "pipe", "ignore"],
 				windowsHide: true,
 			});
@@ -230,46 +230,9 @@ function terminateProcessTree(child: ChildProcess, signal: NodeJS.Signals): void
 		return;
 	}
 
-	for (const pid of descendantPids(child.pid)) {
-		try {
-			process.kill(pid, signal);
-		} catch {
-			// The process may have exited between discovery and termination.
-		}
-	}
 	try {
-		process.kill(child.pid, signal);
+		process.kill(-child.pid, signal);
 	} catch {
-		// The process may have exited between discovery and termination.
+		child.kill(signal);
 	}
-}
-
-function descendantPids(rootPid: number): number[] {
-	let output: string;
-	try {
-		output = execFileSync("ps", ["-eo", "pid=,ppid="], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
-	} catch {
-		return [];
-	}
-
-	const children = new Map<number, number[]>();
-	for (const line of output.split("\n")) {
-		const [pidText, parentPidText] = line.trim().split(/\s+/);
-		const pid = Number(pidText);
-		const parentPid = Number(parentPidText);
-		if (!Number.isInteger(pid) || !Number.isInteger(parentPid)) continue;
-		const siblings = children.get(parentPid) ?? [];
-		siblings.push(pid);
-		children.set(parentPid, siblings);
-	}
-
-	const descendants: number[] = [];
-	const pending = [rootPid];
-	for (let index = 0; index < pending.length; index++) {
-		for (const childPid of children.get(pending[index]) ?? []) {
-			descendants.push(childPid);
-			pending.push(childPid);
-		}
-	}
-	return descendants.reverse();
 }
