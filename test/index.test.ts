@@ -34,7 +34,11 @@ function shellQuote(value: string): string {
 }
 
 function nodeCommand(source: string): string {
-  return `${shellQuote(process.execPath)} -e ${shellQuote(source)}`;
+  const encoded = Buffer.from(source).toString("base64");
+  const script = `eval(Buffer.from('${encoded}', 'base64').toString())`;
+  return process.platform === "win32"
+    ? `"${process.execPath}" -e "${script}"`
+    : `${shellQuote(process.execPath)} -e ${shellQuote(script)}`;
 }
 
 async function loadHarness(): Promise<Harness> {
@@ -158,6 +162,15 @@ describe("monitor extension", () => {
     );
   });
 
+  it("stops a monitor when an output line exceeds the limit", async () => {
+    const harness = await loadHarness();
+    await start(harness, nodeCommand('process.stdout.write("x".repeat(100_000)); setTimeout(() => {}, 5000);'));
+
+    await waitFor(() => harness.messages.some((message) => text(message).includes("output line exceeded")));
+    const limitMessage = harness.messages.find((message) => text(message).includes("output line exceeded"));
+    expect((limitMessage?.details as any).lineLimitExceeded).toBe(true);
+  });
+
   it("coalesces nearby lines and sends a steer that triggers a turn", async () => {
     const harness = await loadHarness();
     await start(
@@ -210,7 +223,7 @@ describe("monitor extension", () => {
     ).rejects.toThrow("Maximum of 8 monitors");
   });
 
-  it("stops descendants of a monitor", async () => {
+  it.skipIf(process.platform === "win32")("stops descendants of a monitor", async () => {
     const harness = await loadHarness();
     const marker = join(tmpdir(), `pi-tiny-monitor-${process.pid}-${Date.now()}.marker`);
     rmSync(marker, { force: true });
@@ -252,7 +265,9 @@ describe("monitor extension", () => {
   it("terminates owned processes on stop and session shutdown", async () => {
     const harness = await loadHarness();
     const first = await start(harness, nodeCommand('setTimeout(() => process.stdout.write("should-not-print\\n"), 500); setTimeout(() => {}, 700);'));
+    const stopStarted = Date.now();
     await stop(harness, first.id);
+    expect(Date.now() - stopStarted).toBeLessThan(500);
     await new Promise((resolve) => setTimeout(resolve, 600));
     expect(harness.messages.map(text).join("\n")).not.toContain("should-not-print");
 

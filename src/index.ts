@@ -1,5 +1,6 @@
 import { execFileSync, type ChildProcess, spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
+import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
@@ -8,6 +9,7 @@ const RATE_WINDOW_MS = 10_000;
 const RATE_LIMIT = 50 * (RATE_WINDOW_MS / 1000);
 const MAX_PROCESSES = 8;
 const KILL_GRACE_MS = 1_000;
+const MAX_LINE_BYTES = 64 * 1024;
 
 type ProcessRecord = {
 	id: string;
@@ -44,8 +46,29 @@ export default function tinyMonitor(pi: ExtensionAPI): void {
 		);
 	};
 
+	const stopForOutputLimit = (record: ProcessRecord) => {
+		if (record.stopping) return;
+		record.pending = [];
+		if (record.flushTimer) clearTimeout(record.flushTimer);
+		record.flushTimer = undefined;
+		pi.sendMessage(
+			{
+				customType: "tiny-monitor",
+				content: `[${record.id}] output line exceeded ${MAX_LINE_BYTES} bytes; stopped monitor.`,
+				display: true,
+				details: { id: record.id, command: record.command, lineLimitExceeded: true },
+			},
+			{ deliverAs: "steer", triggerTurn: true },
+		);
+		void stop(record);
+	};
+
 	const queueLine = (record: ProcessRecord, line: string) => {
 		if (record.stopping) return;
+		if (Buffer.byteLength(line, "utf8") > MAX_LINE_BYTES) {
+			stopForOutputLimit(record);
+			return;
+		}
 		const now = Date.now();
 		record.timestamps.push(now);
 		while (record.timestamps[0] < now - RATE_WINDOW_MS) record.timestamps.shift();
@@ -74,6 +97,11 @@ export default function tinyMonitor(pi: ExtensionAPI): void {
 		const parts = (record.carry + text).split("\n");
 		record.carry = parts.pop() ?? "";
 		for (const part of parts) queueLine(record, part.endsWith("\r") ? part.slice(0, -1) : part);
+		if (record.carry && Buffer.byteLength(record.carry, "utf8") > MAX_LINE_BYTES) {
+			record.carry = "";
+			stopForOutputLimit(record);
+			return;
+		}
 		if (final && record.carry) {
 			queueLine(record, record.carry.endsWith("\r") ? record.carry.slice(0, -1) : record.carry);
 			record.carry = "";
@@ -84,12 +112,26 @@ export default function tinyMonitor(pi: ExtensionAPI): void {
 		if (record.stopPromise) return record.stopPromise;
 		record.stopping = true;
 		record.stopPromise = new Promise((resolve) => {
-			terminateProcessTree(record.child, "SIGTERM");
+			const forceTerminated = terminateProcessTree(record.child, "SIGTERM");
 			record.child.stdout?.destroy();
-			setTimeout(() => {
-				terminateProcessTree(record.child, "SIGKILL");
+			if (process.platform === "win32" && forceTerminated) {
 				resolve();
-			}, KILL_GRACE_MS);
+				return;
+			}
+			const startedAt = Date.now();
+			const waitForExit = () => {
+				if (processGone(record.child)) {
+					resolve();
+					return;
+				}
+				if (Date.now() - startedAt >= KILL_GRACE_MS) {
+					terminateProcessTree(record.child, "SIGKILL");
+					resolve();
+					return;
+				}
+				setTimeout(waitForExit, 25);
+			};
+			waitForExit();
 		});
 		return record.stopPromise;
 	}
@@ -206,19 +248,35 @@ function shellCommand(command: string): [string, string[]] {
 		: [process.env.SHELL ?? "/bin/sh", ["-c", command]];
 }
 
-function terminateProcessTree(child: ChildProcess, signal: NodeJS.Signals): void {
+function processGone(child: ChildProcess): boolean {
+	if (process.platform === "win32") return child.exitCode !== null || child.signalCode !== null;
+	if (!child.pid) return true;
+	try {
+		process.kill(-child.pid, 0);
+		return false;
+	} catch (error) {
+		return (error as NodeJS.ErrnoException).code !== "EPERM";
+	}
+}
+
+function terminateProcessTree(child: ChildProcess, signal: NodeJS.Signals): boolean {
 	if (!child.pid) {
 		child.kill(signal);
-		return;
+		return false;
 	}
 
 	if (process.platform === "win32") {
 		try {
-			execFileSync("taskkill.exe", ["/pid", String(child.pid), "/t", "/f"], { stdio: "ignore" });
+			execFileSync(
+				join(process.env.SystemRoot ?? "C:\\Windows", "System32", "taskkill.exe"),
+				["/pid", String(child.pid), "/t", "/f"],
+				{ stdio: "ignore" },
+			);
+			return true;
 		} catch {
 			child.kill(signal);
+			return false;
 		}
-		return;
 	}
 
 	try {
@@ -226,4 +284,5 @@ function terminateProcessTree(child: ChildProcess, signal: NodeJS.Signals): void
 	} catch {
 		child.kill(signal);
 	}
+	return false;
 }
