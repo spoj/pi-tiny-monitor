@@ -1,57 +1,47 @@
 # pi-tiny-monitor
 
-Implementation handoff for a deliberately small Pi extension that turns a background process's stdout into session wake-ups.
+A small [Pi](https://github.com/badlogic/pi-mono) package that runs background shell commands and turns their stdout into session wake-ups.
 
-This repository is a scaffold, not a working extension yet.
+## Install
 
-## Required model-facing surface
+Install directly from this repository:
 
-- `monitor({ command })` starts a process and returns its ID immediately.
-- `monitor_stop({ id })` stops one running process.
-- `monitor_list()` lists running processes.
+```bash
+pi install git:github.com/spoj/pi-tiny-monitor
+```
 
-No other tools or slash commands.
+For a local checkout, use its path instead:
 
-## Deliberate non-goals
+```bash
+pi install /path/to/pi-tiny-monitor
+```
 
-- Output or state persistence.
-- Capturing or reading stderr. Callers can use `2>&1` when stderr should be monitored.
-- Logging. Callers can use `tee` or redirect to a file.
-- Regex or substring filtering. Callers can use `grep --line-buffered` or `awk`.
-- Timeouts, retries, polling, scheduling, PTYs, tmux, process recovery, or restart reconciliation.
-- Custom UI, widgets, renderers, flags, settings, and slash commands.
-- Fresh-agent or RPC semantics. `pi -p "task"` is just another command a monitor may run.
+Pi loads the extension declared in this package's `pi` manifest after installation. Review the source before installing: extensions run with full system access.
 
-## Implementation shape
+## Tools
 
-Keep it in `src/index.ts` unless a pure helper is independently worth testing. The expected state is one `Map<string, ProcessRecord>` captured by the extension factory. A record only needs identity, label, child handle, coalescing state, rate-window timestamps, and stopping state.
+The package adds three tools:
 
-Prefer direct `node:child_process` APIs. Do not add a process library unless direct process-tree termination proves insufficient on a supported platform. Do not depend on another Pi monitor package.
+- `monitor({ command })` starts a background shell command and returns its monitor ID immediately.
+- `monitor_stop({ id })` stops a running monitor.
+- `monitor_list()` lists running monitors.
 
-Only add behavior required above. In particular, do not reproduce the broader feature sets of existing monitor packages.
+A monitor reads stdout only. Output is delivered to the session in short batches as steer messages that trigger a turn. Commands run with Pi's current working directory. Redirect stderr to stdout when it should be monitored, for example:
 
-## Pi pointers
+```text
+monitor({ command: "my-command 2>&1" })
+```
 
-Installed Pi documentation:
+Each monitor is stopped when its session shuts down. A noisy monitor is stopped automatically after exceeding the output rate limit.
 
-- `docs/extensions.md#long-lived-resources-and-shutdown`
-- `docs/extensions.md#pisendmessagemessage-options`
-- `docs/extensions.md#piexeccommand-args-options`
-- `examples/extensions/file-trigger.ts` — minimal asynchronous `sendMessage` wake-up.
-- `src/core/tools/bash.ts` — Pi's local shell execution and process-tree cleanup behavior.
+## Non-goals
 
-Useful external references, for behavior only:
+This package does not provide:
 
-- `gregjohnso/pi-monitor` — stdout batching, rate limiting, and wake-up semantics.
-- `@bytetrue/pi-background-terminal` — small session-owned process manager and cleanup.
+- stderr capture by default
+- output or state persistence
+- logging, filtering, timeouts, retries, polling, scheduling, PTYs, tmux, process recovery, or restart reconciliation
+- custom UI, widgets, renderers, flags, settings, or slash commands
+- fresh-agent or RPC semantics
 
-Do not copy their persistence, duplicated command surfaces, UI, or compatibility machinery.
-
-## Minimum tests
-
-- Split lines across chunks, including CRLF, UTF-8 boundaries, and a final unterminated line.
-- Coalesce nearby lines and flush after 200 ms.
-- Rate limit stops a noisy process once.
-- Start returns before process completion.
-- Stop and session shutdown terminate owned processes.
-- A stdout batch calls `sendMessage` with `deliverAs: "steer"` and `triggerTurn: true`.
+Use shell tools such as `tee`, `grep --line-buffered`, or `awk` in the command when those behaviors are needed.
