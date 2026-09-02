@@ -84,21 +84,12 @@ export default function tinyMonitor(pi: ExtensionAPI): void {
 		if (record.stopPromise) return record.stopPromise;
 		record.stopping = true;
 		record.stopPromise = new Promise((resolve) => {
-			const alreadyExited = record.child.exitCode !== null || record.child.signalCode !== null;
-			let killTimer: NodeJS.Timeout | undefined;
-			const done = () => {
-				if (killTimer) clearTimeout(killTimer);
-				resolve();
-			};
-			if (!alreadyExited) record.child.once("close", done);
 			terminateProcessTree(record.child, "SIGTERM");
 			record.child.stdout?.destroy();
-			if (alreadyExited) {
+			const killTimer = setTimeout(() => {
+				terminateProcessTree(record.child, "SIGKILL");
 				resolve();
-				return;
-			}
-			killTimer = setTimeout(() => terminateProcessTree(record.child, "SIGKILL"), KILL_GRACE_MS);
-			killTimer.unref();
+			}, KILL_GRACE_MS);
 		});
 		return record.stopPromise;
 	}
