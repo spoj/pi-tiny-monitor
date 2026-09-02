@@ -86,7 +86,7 @@ export default function tinyMonitor(pi: ExtensionAPI): void {
 		record.stopPromise = new Promise((resolve) => {
 			terminateProcessTree(record.child, "SIGTERM");
 			record.child.stdout?.destroy();
-			const killTimer = setTimeout(() => {
+			setTimeout(() => {
 				terminateProcessTree(record.child, "SIGKILL");
 				resolve();
 			}, KILL_GRACE_MS);
