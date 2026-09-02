@@ -1,3 +1,6 @@
+import { existsSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
@@ -142,6 +145,19 @@ describe("monitor extension", () => {
     expect(output).not.toContain("�");
   });
 
+  it("flushes steady output instead of waiting for the process to go quiet", async () => {
+    const harness = await loadHarness();
+    await start(
+      harness,
+      nodeCommand('setInterval(() => process.stdout.write("tick\\n"), 50);'),
+    );
+
+    await waitFor(
+      () => harness.messages.filter((message) => text(message).includes("tick")).length >= 2,
+      700,
+    );
+  });
+
   it("coalesces nearby lines and sends a steer that triggers a turn", async () => {
     const harness = await loadHarness();
     await start(
@@ -176,6 +192,40 @@ describe("monitor extension", () => {
       harness.context,
     );
     expect(resultText(listing)).toContain(id);
+  });
+
+  it("enforces the maximum number of running monitors", async () => {
+    const harness = await loadHarness();
+    const command = nodeCommand("setTimeout(() => {}, 5000);");
+    await Promise.all(Array.from({ length: 8 }, () => start(harness, command)));
+
+    await expect(
+      tool(harness, "monitor").execute(
+        "start",
+        { command },
+        undefined,
+        undefined,
+        harness.context,
+      ),
+    ).rejects.toThrow("Maximum of 8 monitors");
+  });
+
+  it("stops descendants of a monitor", async () => {
+    const harness = await loadHarness();
+    const marker = join(tmpdir(), `pi-tiny-monitor-${process.pid}-${Date.now()}.marker`);
+    rmSync(marker, { force: true });
+    try {
+      const descendant = `const fs = require("node:fs"); setTimeout(() => fs.writeFileSync(${JSON.stringify(marker)}, "leaked"), 500); setTimeout(() => {}, 5000);`;
+      const source = `const { spawn } = require("node:child_process"); spawn(process.execPath, ["-e", ${JSON.stringify(descendant)}], { stdio: "ignore" }); process.stdout.write("ready\\n"); setTimeout(() => {}, 5000);`;
+      const { id } = await start(harness, nodeCommand(source));
+      await waitFor(() => harness.messages.some((message) => text(message).includes("ready")));
+
+      await stop(harness, id);
+      await new Promise((resolve) => setTimeout(resolve, 700));
+      expect(existsSync(marker)).toBe(false);
+    } finally {
+      rmSync(marker, { force: true });
+    }
   });
 
   it("stops a noisy process once it exceeds the rate limit", async () => {

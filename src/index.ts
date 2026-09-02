@@ -1,22 +1,13 @@
-import { type ChildProcess, spawn } from "node:child_process";
+import { execFileSync, type ChildProcess, spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
-import type {
-	AgentToolUpdateCallback,
-	ExtensionAPI,
-	ExtensionContext,
-} from "@earendil-works/pi-coding-agent";
-import { Static, Type } from "typebox";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 
 const BATCH_WINDOW_MS = 200;
 const RATE_WINDOW_MS = 10_000;
 const RATE_LIMIT = 50 * (RATE_WINDOW_MS / 1000);
 const MAX_PROCESSES = 8;
 const KILL_GRACE_MS = 1_000;
-
-const monitorSchema = Type.Object({
-	command: Type.String({ description: "Shell command whose stdout should be monitored." }),
-});
-type MonitorInput = Static<typeof monitorSchema>;
 
 type ProcessRecord = {
 	id: string;
@@ -76,8 +67,7 @@ export default function tinyMonitor(pi: ExtensionAPI): void {
 		}
 
 		record.pending.push(line);
-		if (record.flushTimer) clearTimeout(record.flushTimer);
-		record.flushTimer = setTimeout(() => flush(record), BATCH_WINDOW_MS);
+		if (!record.flushTimer) record.flushTimer = setTimeout(() => flush(record), BATCH_WINDOW_MS);
 	};
 
 	const consume = (record: ProcessRecord, text: string, final = false) => {
@@ -95,6 +85,7 @@ export default function tinyMonitor(pi: ExtensionAPI): void {
 		record.stopping = true;
 		record.stopPromise = new Promise((resolve) => {
 			if (record.child.exitCode !== null || record.child.signalCode !== null) {
+				record.child.stdout?.destroy();
 				resolve();
 				return;
 			}
@@ -105,9 +96,9 @@ export default function tinyMonitor(pi: ExtensionAPI): void {
 				resolve();
 			};
 			record.child.once("close", done);
-			record.child.kill("SIGTERM");
+			terminateProcessTree(record.child, "SIGTERM");
 			record.child.stdout?.destroy();
-			killTimer = setTimeout(() => record.child.kill("SIGKILL"), KILL_GRACE_MS);
+			killTimer = setTimeout(() => terminateProcessTree(record.child, "SIGKILL"), KILL_GRACE_MS);
 			killTimer.unref();
 		});
 		return record.stopPromise;
@@ -121,6 +112,9 @@ export default function tinyMonitor(pi: ExtensionAPI): void {
 			command: Type.String({ description: "Shell command whose stdout should be monitored." }),
 		}),
 		async execute(_toolCallId, { command }, _signal, _onUpdate, ctx) {
+			if (processes.size >= MAX_PROCESSES) {
+				throw new Error(`Maximum of ${MAX_PROCESSES} monitors already running.`);
+			}
 			const id = `monitor_${nextId++}`;
 			const startedAt = new Date().toISOString();
 			const [shell, args] = shellCommand(command);
@@ -219,4 +213,63 @@ function shellCommand(command: string): [string, string[]] {
 	return process.platform === "win32"
 		? [process.env.ComSpec ?? "cmd.exe", ["/d", "/s", "/c", command]]
 		: [process.env.SHELL ?? "/bin/sh", ["-c", command]];
+}
+
+function terminateProcessTree(child: ChildProcess, signal: NodeJS.Signals): void {
+	if (!child.pid) {
+		child.kill(signal);
+		return;
+	}
+
+	if (process.platform === "win32") {
+		try {
+			execFileSync("taskkill.exe", ["/pid", String(child.pid), "/t", "/f"], { stdio: "ignore" });
+		} catch {
+			child.kill(signal);
+		}
+		return;
+	}
+
+	for (const pid of descendantPids(child.pid)) {
+		try {
+			process.kill(pid, signal);
+		} catch {
+			// The process may have exited between discovery and termination.
+		}
+	}
+	try {
+		process.kill(child.pid, signal);
+	} catch {
+		// The process may have exited between discovery and termination.
+	}
+}
+
+function descendantPids(rootPid: number): number[] {
+	let output: string;
+	try {
+		output = execFileSync("ps", ["-eo", "pid=,ppid="], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+	} catch {
+		return [];
+	}
+
+	const children = new Map<number, number[]>();
+	for (const line of output.split("\n")) {
+		const [pidText, parentPidText] = line.trim().split(/\s+/);
+		const pid = Number(pidText);
+		const parentPid = Number(parentPidText);
+		if (!Number.isInteger(pid) || !Number.isInteger(parentPid)) continue;
+		const siblings = children.get(parentPid) ?? [];
+		siblings.push(pid);
+		children.set(parentPid, siblings);
+	}
+
+	const descendants: number[] = [];
+	const pending = [rootPid];
+	for (let index = 0; index < pending.length; index++) {
+		for (const childPid of children.get(pending[index]) ?? []) {
+			descendants.push(childPid);
+			pending.push(childPid);
+		}
+	}
+	return descendants.reverse();
 }
