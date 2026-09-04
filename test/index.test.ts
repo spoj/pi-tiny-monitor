@@ -117,10 +117,6 @@ function text(message: Message): string {
   return "";
 }
 
-function resultText(result: any): string {
-  return text({ content: result?.content });
-}
-
 async function waitFor(condition: () => boolean, timeout = 2_000): Promise<void> {
   const started = Date.now();
   while (!condition()) {
@@ -130,6 +126,11 @@ async function waitFor(condition: () => boolean, timeout = 2_000): Promise<void>
 }
 
 describe("monitor extension", () => {
+  it("registers only monitor and monitor_stop", async () => {
+    const harness = await loadHarness();
+    expect([...harness.tools.keys()]).toEqual(["monitor", "monitor_stop"]);
+  });
+
   it("splits CRLF and UTF-8 boundaries and delivers an unterminated final line", async () => {
     const harness = await loadHarness();
     const source = [
@@ -197,14 +198,7 @@ describe("monitor extension", () => {
     );
 
     expect(Date.now() - started).toBeLessThan(300);
-    const listing = await tool(harness, "monitor_list").execute(
-      "list",
-      {},
-      undefined,
-      undefined,
-      harness.context,
-    );
-    expect(resultText(listing)).toContain(id);
+    await stop(harness, id);
   });
 
   it("rejects starts after session shutdown begins", async () => {
@@ -223,15 +217,6 @@ describe("monitor extension", () => {
     await expect(
       tool(harness, "monitor").execute("start", { command: "echo never" }, undefined, undefined, context),
     ).rejects.toThrow();
-
-    const listing = await tool(harness, "monitor_list").execute(
-      "list",
-      {},
-      undefined,
-      undefined,
-      harness.context,
-    );
-    expect(resultText(listing)).toBe("No monitors running.");
   });
 
   it("enforces the maximum number of running monitors", async () => {
@@ -269,23 +254,16 @@ describe("monitor extension", () => {
 
   it("stops a noisy process once it exceeds the rate limit", async () => {
     const harness = await loadHarness();
-    const { id } = await start(
+    await start(
       harness,
       nodeCommand(
         'for (let i = 0; i < 1000; i++) process.stdout.write("noise\\n"); setTimeout(() => process.stdout.write("survived\\n"), 300); setTimeout(() => {}, 1000);',
       ),
     );
 
+    await waitFor(() => harness.messages.some((message) => text(message).includes("rate limit exceeded")));
     await new Promise((resolve) => setTimeout(resolve, 400));
     expect(harness.messages.map(text).join("\n")).not.toContain("survived");
-    const listing = await tool(harness, "monitor_list").execute(
-      "list",
-      {},
-      undefined,
-      undefined,
-      harness.context,
-    );
-    expect(resultText(listing)).not.toContain(id);
   });
 
   it("terminates owned processes on stop and session shutdown", async () => {

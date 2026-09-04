@@ -20,11 +20,10 @@ Pi loads the extension declared in this package's `pi` manifest after installati
 
 ## Tools
 
-The package adds three tools:
+The package adds two tools:
 
 - `monitor({ command })` starts a background shell command and returns its monitor ID immediately.
 - `monitor_stop({ id })` stops a running monitor.
-- `monitor_list()` lists running monitors.
 
 A monitor reads stdout only. Output is delivered to the session in short batches as steer messages that trigger a turn. Commands run with Pi's current working directory. Redirect stderr to stdout when it should be monitored, for example:
 

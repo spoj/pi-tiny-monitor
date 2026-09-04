@@ -217,28 +217,6 @@ export default function tinyMonitor(pi: ExtensionAPI): void {
 		},
 	});
 
-	pi.registerTool({
-		name: "monitor_list",
-		label: "Monitor List",
-		description: "List running background monitors.",
-		parameters: Type.Object({}),
-		async execute() {
-			const monitors = [...processes.values()].map(({ id, command, child, stopping }) => ({
-				id,
-				command,
-				pid: child.pid,
-				stopping,
-			}));
-			return {
-				content: [{
-					type: "text",
-					text: monitors.length ? monitors.map(({ id, command }) => `${id}: ${command}`).join("\n") : "No monitors running.",
-				}],
-				details: { monitors },
-			};
-		},
-	});
-
 	pi.on("session_shutdown", async () => {
 		active = false;
 		for (const record of processes.values()) {
