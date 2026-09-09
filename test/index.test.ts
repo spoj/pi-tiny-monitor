@@ -149,7 +149,7 @@ describe("monitor extension", () => {
     await waitFor(() => harness.messages.length > 0);
     expect(harness.messages).toHaveLength(1);
     expect(text(harness.messages[0])).toBe(`[${id}] process exited with code ${exitCode}.`);
-    expect(harness.messages[0].details).toEqual({ id, command, exitCode, signal: null });
+    expect(harness.messages[0].details).toEqual({ id, command, lines: [], exitCode, signal: null });
     expect(harness.messages[0].options).toEqual({ deliverAs: "steer", triggerTurn: true });
     expect(harness.widgets.size).toBe(0);
   });
@@ -163,14 +163,17 @@ describe("monitor extension", () => {
     expect(harness.messages[0].details).toMatchObject({ exitCode: null, signal: "SIGTERM" });
   });
 
-  it("delivers final stdout before the exit notification", async () => {
+  it.each([
+    'process.stdout.write("final line");',
+    'process.stdout.end("final line"); setTimeout(() => {}, 500);',
+  ])("coalesces final stdout and exit: %s", async (source) => {
     const harness = await loadHarness();
-    await start(harness, nodeCommand('process.stdout.write("final line");'));
+    const { id } = await start(harness, nodeCommand(source));
 
     await waitFor(() => harness.messages.some((message) => text(message).includes("process exited")));
-    expect(harness.messages).toHaveLength(2);
-    expect(text(harness.messages[0])).toContain("final line");
-    expect(text(harness.messages[1])).toContain("process exited with code 0");
+    expect(harness.messages).toHaveLength(1);
+    expect(text(harness.messages[0])).toBe(`[${id}]\nfinal line\nprocess exited with code 0.`);
+    expect(harness.messages[0].details).toMatchObject({ lines: ["final line"], exitCode: 0, signal: null });
   });
 
   it("updates the running count on start, stop, exit, and shutdown", async () => {
@@ -228,9 +231,9 @@ describe("monitor extension", () => {
 
     await waitFor(
       () => harness.messages.filter((message) => text(message).includes("tick")).length >= 2,
-      700,
+      4_700,
     );
-  });
+  }, 7_000);
 
   it("stops a monitor when an output line exceeds the limit", async () => {
     const harness = await loadHarness(true);
@@ -243,16 +246,18 @@ describe("monitor extension", () => {
     expect(harness.messages).toHaveLength(1);
   });
 
-  it("coalesces nearby lines and sends a steer that triggers a turn", async () => {
+  it("coalesces lines over two seconds and sends a steer that triggers a turn", async () => {
     const harness = await loadHarness();
+    const started = Date.now();
     await start(
       harness,
       nodeCommand(
-        'process.stdout.write("first\\n"); setTimeout(() => process.stdout.write("second\\n"), 50); setTimeout(() => {}, 500);',
+        'process.stdout.write("first\\n"); setTimeout(() => process.stdout.write("second\\n"), 1_000); setTimeout(() => {}, 5_000);',
       ),
     );
 
-    await waitFor(() => harness.messages.some((message) => text(message).includes("second")));
+    await waitFor(() => harness.messages.some((message) => text(message).includes("second")), 3_000);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(2_000);
     const eventMessages = harness.messages.filter((message) => text(message).includes("first"));
     expect(eventMessages).toHaveLength(1);
     expect(text(eventMessages[0])).toContain("second");

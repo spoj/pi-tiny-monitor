@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
-const BATCH_WINDOW_MS = 200;
+const BATCH_WINDOW_MS = 2_000;
 const RATE_WINDOW_MS = 10_000;
 const RATE_LIMIT = 50 * (RATE_WINDOW_MS / 1000);
 const MAX_PROCESSES = 8;
@@ -38,18 +38,22 @@ export default function tinyMonitor(pi: ExtensionAPI): void {
 		);
 	};
 
-	const flush = (record: ProcessRecord) => {
+	const flush = (record: ProcessRecord, exit?: { exitCode: number | null; signal: NodeJS.Signals | null }) => {
 		if (record.flushTimer) clearTimeout(record.flushTimer);
 		record.flushTimer = undefined;
-		if (!active || record.pending.length === 0) return;
+		if (!active || (record.pending.length === 0 && !exit)) return;
 		const lines = record.pending;
 		record.pending = [];
+		const output = lines.length > 0 ? `\n${lines.join("\n")}` : "";
+		const status = exit
+			? `${lines.length > 0 ? "\n" : " "}process exited ${exit.signal ? `with signal ${exit.signal}` : `with code ${exit.exitCode}`}.`
+			: "";
 		pi.sendMessage(
 			{
 				customType: "tiny-monitor",
-				content: `[${record.id}]\n${lines.join("\n")}`,
+				content: `[${record.id}]${output}${status}`,
 				display: true,
-				details: { id: record.id, command: record.command, lines },
+				details: { id: record.id, command: record.command, lines, ...exit },
 			},
 			{ deliverAs: "steer", triggerTurn: true },
 		);
@@ -193,21 +197,9 @@ export default function tinyMonitor(pi: ExtensionAPI): void {
 			child.stdout?.on("data", (chunk: Buffer) => consume(record, record.decoder.write(chunk)));
 			child.stdout?.once("end", () => {
 				consume(record, record.decoder.end(), true);
-				flush(record);
 			});
 			child.once("close", (exitCode, signal) => {
-				flush(record);
-				if (active && !record.stopping && processes.has(id)) {
-					pi.sendMessage(
-						{
-							customType: "tiny-monitor",
-							content: `[${id}] process exited ${signal ? `with signal ${signal}` : `with code ${exitCode}`}.`,
-							display: true,
-							details: { id, command, exitCode, signal },
-						},
-						{ deliverAs: "steer", triggerTurn: true },
-					);
-				}
+				flush(record, !record.stopping && processes.has(id) ? { exitCode, signal } : undefined);
 				void stop(record);
 			});
 

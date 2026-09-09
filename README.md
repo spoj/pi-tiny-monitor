@@ -25,13 +25,13 @@ The package adds two tools:
 - `monitor({ command })` starts a background shell command and returns its monitor ID immediately.
 - `monitor_stop({ id })` stops a running monitor.
 
-A monitor reads stdout only. Output is delivered to the session in short batches as steer messages that trigger a turn. Commands run with Pi's current working directory. Redirect stderr to stdout when it should be monitored, for example:
+A monitor reads stdout only. Output is delivered to the session in fixed 2-second batches per monitor as steer messages that trigger a turn. Commands run with Pi's current working directory. Redirect stderr to stdout when it should be monitored, for example:
 
 ```text
 monitor({ command: "my-command 2>&1" })
 ```
 
-When a command exits, the monitor flushes its remaining stdout and sends a wake-up with the exit code or signal, even if the command produced no output. Explicit stops and session shutdown do not send exit wake-ups.
+When a command exits, the monitor immediately sends one wake-up combining its remaining stdout and the exit code or signal, even if the command produced no output. Explicit stops and session shutdown do not send exit wake-ups.
 
 A widget above the editor shows `n monitors running` while monitors are active and disappears at zero.
 
