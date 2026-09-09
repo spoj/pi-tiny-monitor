@@ -1,7 +1,7 @@
 import { execFileSync, type ChildProcess, spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 import { join } from "node:path";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { getShellConfig, SettingsManager, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
 const BATCH_WINDOW_MS = 2_000;
@@ -166,13 +166,21 @@ export default function tinyMonitor(pi: ExtensionAPI): void {
 			}
 			const id = `monitor_${nextId++}`;
 			const startedAt = new Date().toISOString();
-			const [shell, args] = shellCommand(command);
-			const child = spawn(shell, args, {
+			const settings = SettingsManager.create(ctx.cwd, undefined, { projectTrusted: ctx.isProjectTrusted() });
+			const { shell, args, commandTransport } = getShellConfig(settings.getShellPath());
+			const prefix = settings.getShellCommandPrefix();
+			const resolvedCommand = prefix ? `${prefix}\n${command}` : command;
+			const commandFromStdin = commandTransport === "stdin";
+			const child = spawn(shell, commandFromStdin ? args : [...args, resolvedCommand], {
 				cwd: ctx.cwd,
 				detached: process.platform !== "win32",
-				stdio: ["ignore", "pipe", "ignore"],
+				stdio: [commandFromStdin ? "pipe" : "ignore", "pipe", "ignore"],
 				windowsHide: true,
 			});
+			if (commandFromStdin) {
+				child.stdin?.on("error", () => {});
+				child.stdin?.end(resolvedCommand);
+			}
 			const record: ProcessRecord = {
 				id,
 				command,
@@ -250,12 +258,6 @@ export default function tinyMonitor(pi: ExtensionAPI): void {
 		await Promise.all([...processes.values()].map(stop));
 		processes.clear();
 	});
-}
-
-function shellCommand(command: string): [string, string[]] {
-	return process.platform === "win32"
-		? [process.env.ComSpec ?? "cmd.exe", ["/d", "/s", "/c", command]]
-		: [process.env.SHELL ?? "/bin/sh", ["-c", command]];
 }
 
 function processGone(child: ChildProcess): boolean {

@@ -1,8 +1,13 @@
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { afterEach, describe, expect, it } from "vitest";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { CONFIG_DIR_NAME, getShellConfig, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import * as piModule from "@earendil-works/pi-coding-agent";
+
+vi.mock("@earendil-works/pi-coding-agent", async (importOriginal) => ({
+  ...await importOriginal<typeof piModule>(),
+}));
 
 interface Message {
   content?: unknown;
@@ -20,14 +25,25 @@ interface Harness {
   messages: Message[];
   events: Map<string, Array<(...args: unknown[]) => unknown>>;
   widgets: Map<string, string[] | undefined>;
-  context: { cwd: string; hasUI: boolean; ui: { setWidget: (key: string, lines: string[] | undefined) => void } };
+  context: { cwd: string; hasUI: boolean; isProjectTrusted: () => boolean; ui: { setWidget: (key: string, lines: string[] | undefined) => void } };
   shutdown: () => Promise<void>;
 }
 
 const harnesses: Harness[] = [];
+let testDir: string;
+
+beforeEach(() => {
+  testDir = mkdtempSync(join(tmpdir(), "pi-tiny-monitor-"));
+  mkdirSync(join(testDir, "agent"));
+  mkdirSync(join(testDir, CONFIG_DIR_NAME));
+  vi.stubEnv("PI_CODING_AGENT_DIR", join(testDir, "agent"));
+});
 
 afterEach(async () => {
   await Promise.all(harnesses.splice(0).map((harness) => harness.shutdown()));
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+  rmSync(testDir, { recursive: true, force: true });
 });
 
 function shellQuote(value: string): string {
@@ -37,9 +53,7 @@ function shellQuote(value: string): string {
 function nodeCommand(source: string): string {
   const encoded = Buffer.from(source).toString("base64");
   const script = `eval(Buffer.from('${encoded}', 'base64').toString())`;
-  return process.platform === "win32"
-    ? `"${process.execPath}" -e "${script}"`
-    : `${shellQuote(process.execPath)} -e ${shellQuote(script)}`;
+  return `${shellQuote(process.execPath.replaceAll("\\", "/"))} -e ${shellQuote(script)}`;
 }
 
 async function loadHarness(hasUI = false): Promise<Harness> {
@@ -49,8 +63,9 @@ async function loadHarness(hasUI = false): Promise<Harness> {
   const events = new Map<string, Array<(...args: unknown[]) => unknown>>();
   const widgets = new Map<string, string[] | undefined>();
   const context = {
-    cwd: process.cwd(),
+    cwd: testDir,
     hasUI,
+    isProjectTrusted: () => true,
     ui: { setWidget: (key: string, lines: string[] | undefined) => { widgets.set(key, lines); } },
   };
   const pi = {
@@ -139,6 +154,54 @@ describe("monitor extension", () => {
   it("registers only monitor and monitor_stop", async () => {
     const harness = await loadHarness();
     expect([...harness.tools.keys()]).toEqual(["monitor", "monitor_stop"]);
+  });
+
+  it("uses Pi's default shell rather than SHELL or ComSpec, without login mode", async () => {
+    vi.stubEnv("SHELL", "/missing/login-shell");
+    vi.stubEnv("ComSpec", "/missing/cmd.exe");
+    const harness = await loadHarness();
+    const { result } = await start(harness, 'case "$-" in *i*) exit 1;; esac; shopt -q login_shell && exit 1; printf "ok\\n"');
+
+    expect(result.details.shell).toBe(getShellConfig().shell);
+    await waitFor(() => harness.messages.length > 0);
+    expect(harness.messages[0].details).toMatchObject({ lines: ["ok"], exitCode: 0 });
+  });
+
+  it.each([true, false])("honors global settings and project trust (%s)", async (trusted) => {
+    const shell = getShellConfig().shell;
+    writeFileSync(join(testDir, "agent", "settings.json"), JSON.stringify({
+      shellPath: trusted ? "/missing/global-shell" : shell,
+      shellCommandPrefix: "export MONITOR_TEST_PREFIX=global",
+    }));
+    writeFileSync(join(testDir, CONFIG_DIR_NAME, "settings.json"), JSON.stringify({
+      shellPath: trusted ? shell : "/missing/untrusted-shell",
+      shellCommandPrefix: "export MONITOR_TEST_PREFIX=project",
+    }));
+    const harness = await loadHarness();
+    harness.context.isProjectTrusted = () => trusted;
+    const resolveShell = vi.spyOn(piModule, "getShellConfig");
+    const { result } = await start(harness, 'printf "%s\\n" "$MONITOR_TEST_PREFIX"');
+    expect(resolveShell).toHaveBeenCalledWith(shell);
+    expect(result.details.shell).toBe(shell);
+    await waitFor(() => harness.messages.length > 0);
+    expect(harness.messages[0].details).toMatchObject({ lines: [trusted ? "project" : "global"], exitCode: 0 });
+  });
+
+  it("rejects a missing configured shell without falling back or leaving a stale count", async () => {
+    writeFileSync(join(testDir, CONFIG_DIR_NAME, "settings.json"), JSON.stringify({ shellPath: "/missing/configured-shell" }));
+    const harness = await loadHarness(true);
+    await expect(start(harness, "echo never")).rejects.toThrow("Custom shell path not found");
+    expect(harness.messages).toEqual([]);
+    expect(harness.widgets.get("pi-tiny-monitor")).toBeUndefined();
+  });
+
+  it("passes commands via stdin when Pi's shell config requires it", async () => {
+    const { shell } = getShellConfig();
+    vi.spyOn(piModule, "getShellConfig").mockReturnValue({ shell, args: ["-s"], commandTransport: "stdin" });
+    const harness = await loadHarness();
+    await start(harness, 'printf "stdin command\\n"');
+    await waitFor(() => harness.messages.length > 0);
+    expect(harness.messages[0].details).toMatchObject({ lines: ["stdin command"], exitCode: 0 });
   });
 
   it.each([0, 7])("wakes the session when a silent process exits with code %i", async (exitCode) => {

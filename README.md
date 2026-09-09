@@ -31,6 +31,8 @@ A monitor reads stdout only. Output is delivered to the session in fixed 2-secon
 monitor({ command: "my-command 2>&1" })
 ```
 
+Shell selection uses Pi's built-in bash resolver and `shellPath` setting, not `$SHELL` or `ComSpec`. By default, Pi uses `/bin/bash`, then bash on `PATH`, then `sh` on Unix; on Windows it uses Git Bash or bash on `PATH`. Commands are non-interactive, non-login shells. Pi's `shellCommandPrefix` is also applied. Global settings and trusted project overrides are honored.
+
 When a command exits, the monitor immediately sends one wake-up combining its remaining stdout and the exit code or signal, even if the command produced no output. Explicit stops and session shutdown do not send exit wake-ups.
 
 A widget above the editor shows `n monitors running` while monitors are active and disappears at zero.
