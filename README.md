@@ -1,6 +1,6 @@
 # pi-tiny-monitor
 
-A small [Pi](https://github.com/badlogic/pi-mono) package that runs background shell commands and turns their stdout into session wake-ups.
+A small [Pi](https://github.com/badlogic/pi-mono) package that runs background shell commands and turns their stdout and exits into session wake-ups.
 
 ## Install
 
@@ -31,6 +31,10 @@ A monitor reads stdout only. Output is delivered to the session in short batches
 monitor({ command: "my-command 2>&1" })
 ```
 
+When a command exits, the monitor flushes its remaining stdout and sends a wake-up with the exit code or signal, even if the command produced no output. Explicit stops and session shutdown do not send exit wake-ups.
+
+A widget above the editor shows `n monitors running` while monitors are active and disappears at zero.
+
 Each monitor is stopped when its session shuts down. A noisy monitor is stopped automatically after exceeding the output rate limit.
 
 ## Non-goals
@@ -40,7 +44,7 @@ This package does not provide:
 - stderr capture by default
 - output or state persistence
 - logging, filtering, timeouts, retries, polling, scheduling, PTYs, tmux, process recovery, or restart reconciliation
-- custom UI, widgets, renderers, flags, settings, or slash commands
+- custom renderers, flags, settings, or slash commands
 - fresh-agent or RPC semantics
 
 Use shell tools such as `tee`, `grep --line-buffered`, or `awk` in the command when those behaviors are needed.

@@ -19,7 +19,8 @@ interface Harness {
   tools: Map<string, Tool>;
   messages: Message[];
   events: Map<string, Array<(...args: unknown[]) => unknown>>;
-  context: { cwd: string; hasUI: false };
+  widgets: Map<string, string[] | undefined>;
+  context: { cwd: string; hasUI: boolean; ui: { setWidget: (key: string, lines: string[] | undefined) => void } };
   shutdown: () => Promise<void>;
 }
 
@@ -41,12 +42,17 @@ function nodeCommand(source: string): string {
     : `${shellQuote(process.execPath)} -e ${shellQuote(script)}`;
 }
 
-async function loadHarness(): Promise<Harness> {
+async function loadHarness(hasUI = false): Promise<Harness> {
   const { default: extension } = await import("../src/index.js");
   const tools = new Map<string, Tool>();
   const messages: Message[] = [];
   const events = new Map<string, Array<(...args: unknown[]) => unknown>>();
-  const context = { cwd: process.cwd(), hasUI: false as const };
+  const widgets = new Map<string, string[] | undefined>();
+  const context = {
+    cwd: process.cwd(),
+    hasUI,
+    ui: { setWidget: (key: string, lines: string[] | undefined) => { widgets.set(key, lines); } },
+  };
   const pi = {
     registerTool(tool: Tool) {
       tools.set(tool.name, tool);
@@ -66,6 +72,7 @@ async function loadHarness(): Promise<Harness> {
     tools,
     messages,
     events,
+    widgets,
     context,
     async shutdown() {
       for (const handler of events.get("session_shutdown") ?? []) {
@@ -74,6 +81,9 @@ async function loadHarness(): Promise<Harness> {
     },
   };
   harnesses.push(harness);
+  for (const handler of events.get("session_start") ?? []) {
+    await handler({ reason: "startup" }, context);
+  }
   return harness;
 }
 
@@ -131,6 +141,65 @@ describe("monitor extension", () => {
     expect([...harness.tools.keys()]).toEqual(["monitor", "monitor_stop"]);
   });
 
+  it.each([0, 7])("wakes the session when a silent process exits with code %i", async (exitCode) => {
+    const harness = await loadHarness();
+    const command = nodeCommand(`process.exit(${exitCode});`);
+    const { id } = await start(harness, command);
+
+    await waitFor(() => harness.messages.length > 0);
+    expect(harness.messages).toHaveLength(1);
+    expect(text(harness.messages[0])).toBe(`[${id}] process exited with code ${exitCode}.`);
+    expect(harness.messages[0].details).toEqual({ id, command, exitCode, signal: null });
+    expect(harness.messages[0].options).toEqual({ deliverAs: "steer", triggerTurn: true });
+    expect(harness.widgets.size).toBe(0);
+  });
+
+  it.skipIf(process.platform === "win32")("reports signal exits", async () => {
+    const harness = await loadHarness();
+    const { id } = await start(harness, `exec ${nodeCommand('process.kill(process.pid, "SIGTERM");')}`);
+
+    await waitFor(() => harness.messages.length > 0);
+    expect(text(harness.messages[0])).toBe(`[${id}] process exited with signal SIGTERM.`);
+    expect(harness.messages[0].details).toMatchObject({ exitCode: null, signal: "SIGTERM" });
+  });
+
+  it("delivers final stdout before the exit notification", async () => {
+    const harness = await loadHarness();
+    await start(harness, nodeCommand('process.stdout.write("final line");'));
+
+    await waitFor(() => harness.messages.some((message) => text(message).includes("process exited")));
+    expect(harness.messages).toHaveLength(2);
+    expect(text(harness.messages[0])).toContain("final line");
+    expect(text(harness.messages[1])).toContain("process exited with code 0");
+  });
+
+  it("updates the running count on start, stop, exit, and shutdown", async () => {
+    const harness = await loadHarness(true);
+    expect(harness.widgets.get("pi-tiny-monitor")).toBeUndefined();
+    const first = await start(harness, nodeCommand("setTimeout(() => {}, 5000);"));
+    expect(harness.widgets.get("pi-tiny-monitor")).toEqual(["1 monitors running"]);
+    await start(harness, nodeCommand("setTimeout(() => {}, 500);"));
+    expect(harness.widgets.get("pi-tiny-monitor")).toEqual(["2 monitors running"]);
+
+    await stop(harness, first.id);
+    expect(harness.widgets.get("pi-tiny-monitor")).toEqual(["1 monitors running"]);
+    await waitFor(() => harness.widgets.get("pi-tiny-monitor") === undefined);
+
+    await start(harness, nodeCommand("setTimeout(() => {}, 5000);"));
+    await harness.shutdown();
+    expect(harness.widgets.get("pi-tiny-monitor")).toBeUndefined();
+  });
+
+  it("does not wake the session for explicit stops or shutdown", async () => {
+    const harness = await loadHarness();
+    const first = await start(harness, nodeCommand("setTimeout(() => {}, 5000);"));
+    await stop(harness, first.id);
+    await start(harness, nodeCommand("setTimeout(() => {}, 5000);"));
+    await harness.shutdown();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(harness.messages).toEqual([]);
+  });
+
   it("splits CRLF and UTF-8 boundaries and delivers an unterminated final line", async () => {
     const harness = await loadHarness();
     const source = [
@@ -164,12 +233,14 @@ describe("monitor extension", () => {
   });
 
   it("stops a monitor when an output line exceeds the limit", async () => {
-    const harness = await loadHarness();
+    const harness = await loadHarness(true);
     await start(harness, nodeCommand('process.stdout.write("x".repeat(100_000)); setTimeout(() => {}, 5000);'));
 
     await waitFor(() => harness.messages.some((message) => text(message).includes("output line exceeded")));
     const limitMessage = harness.messages.find((message) => text(message).includes("output line exceeded"));
     expect((limitMessage?.details as any).lineLimitExceeded).toBe(true);
+    await waitFor(() => harness.widgets.get("pi-tiny-monitor") === undefined);
+    expect(harness.messages).toHaveLength(1);
   });
 
   it("coalesces nearby lines and sends a steer that triggers a turn", async () => {
@@ -210,13 +281,16 @@ describe("monitor extension", () => {
     );
   });
 
-  it("propagates asynchronous spawn failures", async () => {
-    const harness = await loadHarness();
+  it("propagates asynchronous spawn failures without an exit wake-up or stale count", async () => {
+    const harness = await loadHarness(true);
     const context = { ...harness.context, cwd: join(tmpdir(), `missing-${process.pid}-${Date.now()}`) };
 
     await expect(
       tool(harness, "monitor").execute("start", { command: "echo never" }, undefined, undefined, context),
     ).rejects.toThrow();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(harness.messages).toEqual([]);
+    expect(harness.widgets.get("pi-tiny-monitor")).toBeUndefined();
   });
 
   it("enforces the maximum number of running monitors", async () => {

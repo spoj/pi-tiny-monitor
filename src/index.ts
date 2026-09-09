@@ -1,7 +1,7 @@
 import { execFileSync, type ChildProcess, spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 import { join } from "node:path";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
 const BATCH_WINDOW_MS = 200;
@@ -28,6 +28,15 @@ export default function tinyMonitor(pi: ExtensionAPI): void {
 	const processes = new Map<string, ProcessRecord>();
 	let nextId = 1;
 	let active = true;
+	let uiContext: ExtensionContext | undefined;
+
+	const updateWidget = () => {
+		if (!uiContext?.hasUI) return;
+		uiContext.ui.setWidget(
+			"pi-tiny-monitor",
+			active && processes.size > 0 ? [`${processes.size} monitors running`] : undefined,
+		);
+	};
 
 	const flush = (record: ProcessRecord) => {
 		if (record.flushTimer) clearTimeout(record.flushTimer);
@@ -111,7 +120,7 @@ export default function tinyMonitor(pi: ExtensionAPI): void {
 	function stop(record: ProcessRecord): Promise<void> {
 		if (record.stopPromise) return record.stopPromise;
 		record.stopping = true;
-		record.stopPromise = new Promise((resolve) => {
+		record.stopPromise = new Promise<void>((resolve) => {
 			const forceTerminated = terminateProcessTree(record.child, "SIGTERM");
 			record.child.stdout?.destroy();
 			if (process.platform === "win32" && forceTerminated) {
@@ -132,6 +141,9 @@ export default function tinyMonitor(pi: ExtensionAPI): void {
 				setTimeout(waitForExit, 25);
 			};
 			waitForExit();
+		}).finally(() => {
+			processes.delete(record.id);
+			updateWidget();
 		});
 		return record.stopPromise;
 	}
@@ -139,9 +151,9 @@ export default function tinyMonitor(pi: ExtensionAPI): void {
 	pi.registerTool({
 		name: "monitor",
 		label: "Monitor",
-		description: "Start a background shell command whose stdout wakes the session.",
+		description: "Start a background shell command whose stdout and exit wake the session.",
 		parameters: Type.Object({
-			command: Type.String({ description: "Shell command whose stdout should be monitored." }),
+			command: Type.String({ description: "Shell command whose stdout and exit should be monitored." }),
 		}),
 		async execute(_toolCallId, { command }, _signal, _onUpdate, ctx) {
 			if (!active) throw new Error("Cannot start a monitor after session shutdown has begun.");
@@ -168,11 +180,13 @@ export default function tinyMonitor(pi: ExtensionAPI): void {
 				stopping: false,
 			};
 			processes.set(id, record);
+			updateWidget();
 
 			const spawned = new Promise<void>((resolve, reject) => {
 				child.once("spawn", resolve);
 				child.once("error", (error) => {
 					processes.delete(id);
+					updateWidget();
 					reject(error);
 				});
 			});
@@ -181,9 +195,20 @@ export default function tinyMonitor(pi: ExtensionAPI): void {
 				consume(record, record.decoder.end(), true);
 				flush(record);
 			});
-			child.once("close", () => {
+			child.once("close", (exitCode, signal) => {
 				flush(record);
-				void stop(record).finally(() => processes.delete(id));
+				if (active && !record.stopping && processes.has(id)) {
+					pi.sendMessage(
+						{
+							customType: "tiny-monitor",
+							content: `[${id}] process exited ${signal ? `with signal ${signal}` : `with code ${exitCode}`}.`,
+							display: true,
+							details: { id, command, exitCode, signal },
+						},
+						{ deliverAs: "steer", triggerTurn: true },
+					);
+				}
+				void stop(record);
 			});
 
 			await spawned;
@@ -217,8 +242,15 @@ export default function tinyMonitor(pi: ExtensionAPI): void {
 		},
 	});
 
+	pi.on("session_start", (_event, ctx) => {
+		uiContext = ctx;
+		updateWidget();
+	});
+
 	pi.on("session_shutdown", async () => {
 		active = false;
+		updateWidget();
+		uiContext = undefined;
 		for (const record of processes.values()) {
 			if (record.flushTimer) clearTimeout(record.flushTimer);
 			record.pending = [];

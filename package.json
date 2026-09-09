@@ -1,7 +1,7 @@
 {
   "name": "pi-tiny-monitor",
   "version": "0.1.0",
-  "description": "Minimal stdout-driven background process monitor for Pi",
+  "description": "Minimal background process monitor with stdout and exit wake-ups for Pi",
   "type": "module",
   "keywords": ["pi-package"],
   "scripts": {
