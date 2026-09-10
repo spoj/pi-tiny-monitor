@@ -108,7 +108,9 @@ export default function tinyMonitor(pi: ExtensionAPI): void {
 			return;
 		}
 
-		record.pending.push(stripVTControlCharacters(line).replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, ""));
+		// Node 22's stripVTControlCharacters can leave OSC payload text behind.
+		const withoutOsc = line.replace(/(?:\u001b\]|\u009d)[\s\S]*?(?:\u0007|\u001b\\|\u009c|$)/g, "");
+		record.pending.push(stripVTControlCharacters(withoutOsc).replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, ""));
 		record.pendingBytes += bytes;
 		if (!record.flushTimer) record.flushTimer = setTimeout(() => flush(record), BATCH_WINDOW_MS);
 	};

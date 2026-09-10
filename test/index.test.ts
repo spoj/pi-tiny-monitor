@@ -336,10 +336,10 @@ describe("monitor extension", () => {
     expect(harness.messages[1].details).toMatchObject({ lines: ["b".repeat(30_000)], exitCode: 0 });
   });
 
-  it("removes terminal controls even when escape sequences span stdout chunks", async () => {
+  it.each(["\u0007", "\u001b\\", "\u009c"])("removes split terminal controls with terminator %j", async (terminator) => {
     const harness = await loadHarness();
     const first = "\u001b]52;c;";
-    const last = "cHduZWQ=\u0007\u001b]0;fake title\u0007\u001b[?2004l\u001b[2J\u001b[31mred\u001b[0m\r\u0000\b\u009b\t終\n";
+    const last = `cHduZWQ=${terminator}\u001b]0;fake title${terminator}\u009d0;c1 title${terminator}\u001b[?2004l\u001b[2J\u001b[31mred\u001b[0m\r\u0000\b\u009b\t終\n`;
     await start(harness, nodeCommand([
       `process.stdout.write(${JSON.stringify(first)});`,
       `setTimeout(() => process.stdout.write(${JSON.stringify(last)}), 20);`,
