@@ -37,7 +37,9 @@ When a command exits, the monitor immediately sends one wake-up combining its re
 
 A widget above the editor shows `n monitors running` while monitors are active and disappears at zero.
 
-Each monitor is stopped when its session shuts down. A noisy monitor is stopped automatically after exceeding the output rate limit.
+Each monitor is stopped when its session shuts down. A noisy monitor is stopped automatically if stdout exceeds 50 KiB in one 2-second batch, 500 lines in 10 seconds, or 64 KiB in an unterminated line. The oversized batch is discarded and a limit notice is sent instead. Byte limits count UTF-8 bytes, including line separators, before sanitization.
+
+Delivered output has ANSI sequences, carriage returns, and other terminal controls removed; tabs and newlines are preserved.
 
 ## Non-goals
 

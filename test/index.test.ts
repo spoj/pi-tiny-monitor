@@ -309,6 +309,48 @@ describe("monitor extension", () => {
     expect(harness.messages).toHaveLength(1);
   });
 
+  it.each([
+    'for (let i = 0; i < 499; i++) process.stdout.write("x".repeat(1024) + "\\n");',
+    'process.stdout.write("終".repeat(20_000) + "\\n");',
+  ])("stops oversized batches before delivering them: %s", async (source) => {
+    const harness = await loadHarness(true);
+    await start(harness, nodeCommand(source));
+
+    await waitFor(() => harness.messages.length > 0);
+    expect(text(harness.messages[0])).toContain("output byte limit exceeded");
+    await waitFor(() => harness.widgets.get("pi-tiny-monitor") === undefined);
+    expect(harness.messages).toHaveLength(1);
+    expect(Buffer.byteLength(text(harness.messages[0]))).toBeLessThan(1024);
+  });
+
+  it("resets the byte budget after each batch", async () => {
+    const harness = await loadHarness();
+    await start(harness, nodeCommand([
+      'process.stdout.write("a".repeat(30_000) + "\\n");',
+      'setTimeout(() => process.stdout.write("b".repeat(30_000) + "\\n"), 2300);',
+    ].join(" ")));
+
+    await waitFor(() => harness.messages.some((message) => text(message).includes("process exited")), 4000);
+    expect(harness.messages).toHaveLength(2);
+    expect(harness.messages[0].details).toMatchObject({ lines: ["a".repeat(30_000)] });
+    expect(harness.messages[1].details).toMatchObject({ lines: ["b".repeat(30_000)], exitCode: 0 });
+  });
+
+  it("removes terminal controls even when escape sequences span stdout chunks", async () => {
+    const harness = await loadHarness();
+    const first = "\u001b]52;c;";
+    const last = "cHduZWQ=\u0007\u001b]0;fake title\u0007\u001b[?2004l\u001b[2J\u001b[31mred\u001b[0m\r\u0000\b\u009b\t終\n";
+    await start(harness, nodeCommand([
+      `process.stdout.write(${JSON.stringify(first)});`,
+      `setTimeout(() => process.stdout.write(${JSON.stringify(last)}), 20);`,
+    ].join(" ")));
+
+    await waitFor(() => harness.messages.some((message) => text(message).includes("process exited")));
+    expect(harness.messages).toHaveLength(1);
+    expect(harness.messages[0].details).toMatchObject({ lines: ["red\t終"], exitCode: 0 });
+    expect(text(harness.messages[0])).not.toMatch(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/);
+  });
+
   it("coalesces lines over two seconds and sends a steer that triggers a turn", async () => {
     const harness = await loadHarness();
     const started = Date.now();

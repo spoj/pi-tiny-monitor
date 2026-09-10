@@ -1,5 +1,6 @@
 import { execFileSync, type ChildProcess, spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
+import { stripVTControlCharacters } from "node:util";
 import { join } from "node:path";
 import { getShellConfig, SettingsManager, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
@@ -7,6 +8,7 @@ import { Type } from "typebox";
 const BATCH_WINDOW_MS = 2_000;
 const RATE_WINDOW_MS = 10_000;
 const RATE_LIMIT = 50 * (RATE_WINDOW_MS / 1000);
+const MAX_BATCH_BYTES = 50 * 1024;
 const MAX_PROCESSES = 8;
 const KILL_GRACE_MS = 1_000;
 const MAX_LINE_BYTES = 64 * 1024;
@@ -18,6 +20,7 @@ type ProcessRecord = {
 	decoder: StringDecoder;
 	carry: string;
 	pending: string[];
+	pendingBytes: number;
 	flushTimer?: NodeJS.Timeout;
 	timestamps: number[];
 	stopping: boolean;
@@ -44,6 +47,7 @@ export default function tinyMonitor(pi: ExtensionAPI): void {
 		if (!active || (record.pending.length === 0 && !exit)) return;
 		const lines = record.pending;
 		record.pending = [];
+		record.pendingBytes = 0;
 		const output = lines.length > 0 ? `\n${lines.join("\n")}` : "";
 		const status = exit
 			? `${lines.length > 0 ? "\n" : " "}process exited ${exit.signal ? `with signal ${exit.signal}` : `with code ${exit.exitCode}`}.`
@@ -83,16 +87,18 @@ export default function tinyMonitor(pi: ExtensionAPI): void {
 			return;
 		}
 		const now = Date.now();
+		const bytes = Buffer.byteLength(line, "utf8") + 1;
 		record.timestamps.push(now);
 		while (record.timestamps[0] < now - RATE_WINDOW_MS) record.timestamps.shift();
-		if (record.timestamps.length > RATE_LIMIT) {
+		const byteLimited = record.pendingBytes + bytes > MAX_BATCH_BYTES;
+		if (record.timestamps.length > RATE_LIMIT || byteLimited) {
 			record.pending = [];
 			if (record.flushTimer) clearTimeout(record.flushTimer);
 			record.flushTimer = undefined;
 			pi.sendMessage(
 				{
 					customType: "tiny-monitor",
-					content: `[${record.id}] rate limit exceeded; stopped noisy monitor.`,
+					content: `[${record.id}] ${byteLimited ? "output byte limit" : "rate limit"} exceeded; stopped noisy monitor.`,
 					display: true,
 					details: { id: record.id, command: record.command, rateLimited: true },
 				},
@@ -102,7 +108,8 @@ export default function tinyMonitor(pi: ExtensionAPI): void {
 			return;
 		}
 
-		record.pending.push(line);
+		record.pending.push(stripVTControlCharacters(line).replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, ""));
+		record.pendingBytes += bytes;
 		if (!record.flushTimer) record.flushTimer = setTimeout(() => flush(record), BATCH_WINDOW_MS);
 	};
 
@@ -155,7 +162,7 @@ export default function tinyMonitor(pi: ExtensionAPI): void {
 	pi.registerTool({
 		name: "monitor",
 		label: "Monitor",
-		description: "Start a background shell command whose stdout and exit wake the session.",
+		description: "Start a background shell command whose stdout and exit wake the session. Stderr is discarded; append 2>&1 to include it. Stops on output exceeding 50 KiB per 2-second batch, 500 lines per 10 seconds, or 64 KiB per line.",
 		parameters: Type.Object({
 			command: Type.String({ description: "Shell command whose stdout and exit should be monitored." }),
 		}),
@@ -188,6 +195,7 @@ export default function tinyMonitor(pi: ExtensionAPI): void {
 				decoder: new StringDecoder("utf8"),
 				carry: "",
 				pending: [],
+				pendingBytes: 0,
 				timestamps: [],
 				stopping: false,
 			};
