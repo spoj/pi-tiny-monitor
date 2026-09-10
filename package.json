@@ -6,7 +6,8 @@
   "keywords": ["pi-package"],
   "scripts": {
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck && npm test"
   },
   "pi": {
     "extensions": ["./src/index.ts"]
