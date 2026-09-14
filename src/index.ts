@@ -20,7 +20,7 @@ type ProcessRecord = {
 	decoder: StringDecoder;
 	carry: string;
 	pending: string[];
-	pendingBytes: number;
+	batchBytes: number;
 	flushTimer?: NodeJS.Timeout;
 	timestamps: number[];
 	stopping: boolean;
@@ -44,10 +44,11 @@ export default function tinyMonitor(pi: ExtensionAPI): void {
 	const flush = (record: ProcessRecord, exit?: { exitCode: number | null; signal: NodeJS.Signals | null }) => {
 		if (record.flushTimer) clearTimeout(record.flushTimer);
 		record.flushTimer = undefined;
-		if (!active || (record.pending.length === 0 && !exit)) return;
+		if (!active) return;
 		const lines = record.pending;
 		record.pending = [];
-		record.pendingBytes = 0;
+		record.batchBytes = 0;
+		if (lines.length === 0 && !exit) return;
 		const output = lines.length > 0 ? `\n${lines.join("\n")}` : "";
 		const status = exit
 			? `${lines.length > 0 ? "\n" : " "}process exited ${exit.signal ? `with signal ${exit.signal}` : `with code ${exit.exitCode}`}.`
@@ -66,6 +67,7 @@ export default function tinyMonitor(pi: ExtensionAPI): void {
 	const stopForOutputLimit = (record: ProcessRecord) => {
 		if (record.stopping) return;
 		record.pending = [];
+		record.batchBytes = 0;
 		if (record.flushTimer) clearTimeout(record.flushTimer);
 		record.flushTimer = undefined;
 		pi.sendMessage(
@@ -87,18 +89,17 @@ export default function tinyMonitor(pi: ExtensionAPI): void {
 			return;
 		}
 		const now = Date.now();
-		const bytes = Buffer.byteLength(line, "utf8") + 1;
 		record.timestamps.push(now);
 		while (record.timestamps[0] < now - RATE_WINDOW_MS) record.timestamps.shift();
-		const byteLimited = record.pendingBytes + bytes > MAX_BATCH_BYTES;
-		if (record.timestamps.length > RATE_LIMIT || byteLimited) {
+		if (record.timestamps.length > RATE_LIMIT) {
 			record.pending = [];
+			record.batchBytes = 0;
 			if (record.flushTimer) clearTimeout(record.flushTimer);
 			record.flushTimer = undefined;
 			pi.sendMessage(
 				{
 					customType: "tiny-monitor",
-					content: `[${record.id}] ${byteLimited ? "output byte limit" : "rate limit"} exceeded; stopped noisy monitor.`,
+					content: `[${record.id}] rate limit exceeded; stopped noisy monitor.`,
 					display: true,
 					details: { id: record.id, command: record.command, rateLimited: true },
 				},
@@ -111,11 +112,10 @@ export default function tinyMonitor(pi: ExtensionAPI): void {
 		// Node 22's stripVTControlCharacters can leave OSC payload text behind.
 		const withoutOsc = line.replace(/(?:\u001b\]|\u009d)[\s\S]*?(?:\u0007|\u001b\\|\u009c|$)/g, "");
 		record.pending.push(stripVTControlCharacters(withoutOsc).replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, ""));
-		record.pendingBytes += bytes;
-		if (!record.flushTimer) record.flushTimer = setTimeout(() => flush(record), BATCH_WINDOW_MS);
 	};
 
-	const consume = (record: ProcessRecord, text: string, final = false) => {
+	const consume = (record: ProcessRecord, text: string, final = false, chunkBytes = 0) => {
+		if (record.stopping) return;
 		const parts = (record.carry + text).split("\n");
 		record.carry = parts.pop() ?? "";
 		for (const part of parts) queueLine(record, part.endsWith("\r") ? part.slice(0, -1) : part);
@@ -128,6 +128,26 @@ export default function tinyMonitor(pi: ExtensionAPI): void {
 			queueLine(record, record.carry.endsWith("\r") ? record.carry.slice(0, -1) : record.carry);
 			record.carry = "";
 		}
+		if (record.stopping || chunkBytes === 0) return;
+		if (record.batchBytes + chunkBytes > MAX_BATCH_BYTES) {
+			record.pending = [];
+			record.batchBytes = 0;
+			if (record.flushTimer) clearTimeout(record.flushTimer);
+			record.flushTimer = undefined;
+			pi.sendMessage(
+				{
+					customType: "tiny-monitor",
+					content: `[${record.id}] output byte limit exceeded; stopped noisy monitor.`,
+					display: true,
+					details: { id: record.id, command: record.command, rateLimited: true },
+				},
+				{ deliverAs: "steer", triggerTurn: true },
+			);
+			void stop(record);
+			return;
+		}
+		record.batchBytes += chunkBytes;
+		if (!record.flushTimer) record.flushTimer = setTimeout(() => flush(record), BATCH_WINDOW_MS);
 	};
 
 	function stop(record: ProcessRecord): Promise<void> {
@@ -197,7 +217,7 @@ export default function tinyMonitor(pi: ExtensionAPI): void {
 				decoder: new StringDecoder("utf8"),
 				carry: "",
 				pending: [],
-				pendingBytes: 0,
+				batchBytes: 0,
 				timestamps: [],
 				stopping: false,
 			};
@@ -212,7 +232,7 @@ export default function tinyMonitor(pi: ExtensionAPI): void {
 					reject(error);
 				});
 			});
-			child.stdout?.on("data", (chunk: Buffer) => consume(record, record.decoder.write(chunk)));
+			child.stdout?.on("data", (chunk: Buffer) => consume(record, record.decoder.write(chunk), false, chunk.byteLength));
 			child.stdout?.once("end", () => {
 				consume(record, record.decoder.end(), true);
 			});
@@ -246,6 +266,7 @@ export default function tinyMonitor(pi: ExtensionAPI): void {
 		async execute(_toolCallId, { id }) {
 			const record = processes.get(id);
 			if (!record) throw new Error(`Unknown monitor: ${id}`);
+			consume(record, record.decoder.end(), true);
 			flush(record);
 			await stop(record);
 			return { content: [{ type: "text", text: `Stopped ${id}.` }], details: { id } };

@@ -266,6 +266,19 @@ describe("monitor extension", () => {
     expect(harness.messages).toEqual([]);
   });
 
+  it("flushes an unterminated line before an explicit stop", async () => {
+    const harness = await loadHarness();
+    const command = nodeCommand('process.stdout.write("partial"); setTimeout(() => {}, 5000);');
+    const { id } = await start(harness, command);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    await stop(harness, id);
+
+    expect(harness.messages).toHaveLength(1);
+    expect(text(harness.messages[0])).toBe(`[${id}]\npartial`);
+    expect(harness.messages[0].details).toEqual({ id, command, lines: ["partial"] });
+  });
+
   it("splits CRLF and UTF-8 boundaries and delivers an unterminated final line", async () => {
     const harness = await loadHarness();
     const source = [
@@ -300,11 +313,33 @@ describe("monitor extension", () => {
 
   it("stops a monitor when an output line exceeds the limit", async () => {
     const harness = await loadHarness(true);
-    await start(harness, nodeCommand('process.stdout.write("x".repeat(100_000)); setTimeout(() => {}, 5000);'));
+    await start(harness, nodeCommand('process.stdout.write("x".repeat(40_000)); setTimeout(() => process.stdout.write("x".repeat(30_000)), 2100); setTimeout(() => {}, 5000);'));
 
-    await waitFor(() => harness.messages.some((message) => text(message).includes("output line exceeded")));
+    await waitFor(() => harness.messages.some((message) => text(message).includes("output line exceeded")), 4_000);
     const limitMessage = harness.messages.find((message) => text(message).includes("output line exceeded"));
     expect((limitMessage?.details as any).lineLimitExceeded).toBe(true);
+    await waitFor(() => harness.widgets.get("pi-tiny-monitor") === undefined);
+    expect(harness.messages).toHaveLength(1);
+  });
+
+  it("stops a running stream when an unterminated batch exceeds the byte limit", async () => {
+    const harness = await loadHarness(true);
+    await start(harness, nodeCommand('process.stdout.write("x".repeat(55_000)); setTimeout(() => {}, 5000);'));
+
+    await waitFor(() => harness.messages.some((message) => text(message).includes("output byte limit exceeded")));
+    const limitMessage = harness.messages.find((message) => text(message).includes("output byte limit exceeded"));
+    expect((limitMessage?.details as any).rateLimited).toBe(true);
+    await waitFor(() => harness.widgets.get("pi-tiny-monitor") === undefined);
+    expect(harness.messages).toHaveLength(1);
+  });
+
+  it("counts CRLF separators in the batch byte limit", async () => {
+    const harness = await loadHarness(true);
+    const source = 'for (let i = 0; i < 50; i++) process.stdout.write("x".repeat(1023) + "\\r\\n");';
+    await start(harness, nodeCommand(source));
+
+    await waitFor(() => harness.messages.length > 0);
+    expect(text(harness.messages[0])).toContain("output byte limit exceeded");
     await waitFor(() => harness.widgets.get("pi-tiny-monitor") === undefined);
     expect(harness.messages).toHaveLength(1);
   });
