@@ -386,6 +386,20 @@ describe("monitor extension", () => {
     expect(text(harness.messages[0])).not.toMatch(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/);
   });
 
+  it("removes OSC payloads that contain line breaks", async () => {
+    const harness = await loadHarness();
+    const first = "\u001b]0;hidden\nstill ";
+    const last = "hidden\u0007visible\n";
+    await start(harness, nodeCommand([
+      `process.stdout.write(${JSON.stringify(first)});`,
+      `setTimeout(() => process.stdout.write(${JSON.stringify(last)}), 20);`,
+    ].join(" ")));
+
+    await waitFor(() => harness.messages.some((message) => text(message).includes("process exited")));
+    expect(harness.messages).toHaveLength(1);
+    expect(harness.messages[0].details).toMatchObject({ lines: ["visible"] });
+  });
+
   it("coalesces lines over two seconds and sends a steer that triggers a turn", async () => {
     const harness = await loadHarness();
     const started = Date.now();

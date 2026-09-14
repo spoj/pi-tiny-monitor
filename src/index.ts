@@ -19,6 +19,9 @@ type ProcessRecord = {
 	child: ChildProcess;
 	decoder: StringDecoder;
 	carry: string;
+	inOsc: boolean;
+	oscEscape: boolean;
+	pendingOscStart: boolean;
 	pending: string[];
 	batchBytes: number;
 	flushTimer?: NodeJS.Timeout;
@@ -116,9 +119,49 @@ export default function tinyMonitor(pi: ExtensionAPI): void {
 
 	const consume = (record: ProcessRecord, text: string, final = false, chunkBytes = 0) => {
 		if (record.stopping) return;
-		const parts = (record.carry + text).split("\n");
-		record.carry = parts.pop() ?? "";
-		for (const part of parts) queueLine(record, part.endsWith("\r") ? part.slice(0, -1) : part);
+		let line = record.carry;
+		for (const char of text) {
+			if (record.inOsc) {
+				line += char;
+				if (record.oscEscape) {
+					record.oscEscape = false;
+					if (char === "\\") {
+						record.inOsc = false;
+						continue;
+					}
+				}
+				if (char === "\u0007" || char === "\u009c") record.inOsc = false;
+				else if (char === "\u001b") record.oscEscape = true;
+				continue;
+			}
+			if (record.pendingOscStart) {
+				record.pendingOscStart = false;
+				if (char === "]") {
+					line += char;
+					record.inOsc = true;
+					continue;
+				}
+			}
+			if (char === "\u009d") {
+				line += char;
+				record.inOsc = true;
+				continue;
+			}
+			if (char === "\u001b") {
+				line += char;
+				record.pendingOscStart = true;
+				continue;
+			}
+			if (char === "\n") {
+				const completeLine = line.endsWith("\r") ? line.slice(0, -1) : line;
+				line = "";
+				queueLine(record, completeLine);
+				if (record.stopping) return;
+				continue;
+			}
+			line += char;
+		}
+		record.carry = line;
 		if (record.carry && Buffer.byteLength(record.carry, "utf8") > MAX_LINE_BYTES) {
 			record.carry = "";
 			stopForOutputLimit(record);
@@ -216,6 +259,9 @@ export default function tinyMonitor(pi: ExtensionAPI): void {
 				child,
 				decoder: new StringDecoder("utf8"),
 				carry: "",
+				inOsc: false,
+				oscEscape: false,
+				pendingOscStart: false,
 				pending: [],
 				batchBytes: 0,
 				timestamps: [],
