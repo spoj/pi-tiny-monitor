@@ -67,7 +67,7 @@ export default function tinyMonitor(pi: ExtensionAPI): void {
 		);
 	};
 
-	const stopForOutputLimit = (record: ProcessRecord) => {
+	const stopForLimit = (record: ProcessRecord, content: string, details: Record<string, boolean>) => {
 		if (record.stopping) return;
 		record.pending = [];
 		record.batchBytes = 0;
@@ -76,9 +76,9 @@ export default function tinyMonitor(pi: ExtensionAPI): void {
 		pi.sendMessage(
 			{
 				customType: "tiny-monitor",
-				content: `[${record.id}] output line exceeded ${MAX_LINE_BYTES} bytes; stopped monitor.`,
+				content: `[${record.id}] ${content}`,
 				display: true,
-				details: { id: record.id, command: record.command, lineLimitExceeded: true },
+				details: { id: record.id, command: record.command, ...details },
 			},
 			{ deliverAs: "steer", triggerTurn: true },
 		);
@@ -88,27 +88,14 @@ export default function tinyMonitor(pi: ExtensionAPI): void {
 	const queueLine = (record: ProcessRecord, line: string) => {
 		if (record.stopping) return;
 		if (Buffer.byteLength(line, "utf8") > MAX_LINE_BYTES) {
-			stopForOutputLimit(record);
+			stopForLimit(record, `output line exceeded ${MAX_LINE_BYTES} bytes; stopped monitor.`, { lineLimitExceeded: true });
 			return;
 		}
 		const now = Date.now();
 		record.timestamps.push(now);
 		while (record.timestamps[0] < now - RATE_WINDOW_MS) record.timestamps.shift();
 		if (record.timestamps.length > RATE_LIMIT) {
-			record.pending = [];
-			record.batchBytes = 0;
-			if (record.flushTimer) clearTimeout(record.flushTimer);
-			record.flushTimer = undefined;
-			pi.sendMessage(
-				{
-					customType: "tiny-monitor",
-					content: `[${record.id}] rate limit exceeded; stopped noisy monitor.`,
-					display: true,
-					details: { id: record.id, command: record.command, rateLimited: true },
-				},
-				{ deliverAs: "steer", triggerTurn: true },
-			);
-			void stop(record);
+			stopForLimit(record, "rate limit exceeded; stopped noisy monitor.", { rateLimited: true });
 			return;
 		}
 
@@ -164,7 +151,7 @@ export default function tinyMonitor(pi: ExtensionAPI): void {
 		record.carry = line;
 		if (record.carry && Buffer.byteLength(record.carry, "utf8") > MAX_LINE_BYTES) {
 			record.carry = "";
-			stopForOutputLimit(record);
+			stopForLimit(record, `output line exceeded ${MAX_LINE_BYTES} bytes; stopped monitor.`, { lineLimitExceeded: true });
 			return;
 		}
 		if (final && record.carry) {
@@ -173,20 +160,7 @@ export default function tinyMonitor(pi: ExtensionAPI): void {
 		}
 		if (record.stopping || chunkBytes === 0) return;
 		if (record.batchBytes + chunkBytes > MAX_BATCH_BYTES) {
-			record.pending = [];
-			record.batchBytes = 0;
-			if (record.flushTimer) clearTimeout(record.flushTimer);
-			record.flushTimer = undefined;
-			pi.sendMessage(
-				{
-					customType: "tiny-monitor",
-					content: `[${record.id}] output byte limit exceeded; stopped noisy monitor.`,
-					display: true,
-					details: { id: record.id, command: record.command, rateLimited: true },
-				},
-				{ deliverAs: "steer", triggerTurn: true },
-			);
-			void stop(record);
+			stopForLimit(record, "output byte limit exceeded; stopped noisy monitor.", { rateLimited: true });
 			return;
 		}
 		record.batchBytes += chunkBytes;
