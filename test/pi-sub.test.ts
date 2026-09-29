@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,14 +13,17 @@ function run(env: Record<string, string>, name = "work"): { args: string[]; dire
 	directories.push(root);
 	const directory = join(root, name);
 	mkdirSync(directory);
+	// Pi records its physical cwd, so start from a symlink whose logical path differs.
+	const link = join(root, "link");
+	symlinkSync(directory, link);
 	writeFileSync(join(root, "pi"), "#!/bin/sh\nprintf '%s\\n' \"$@\"\n");
 	chmodSync(join(root, "pi"), 0o755);
 	const stdout = execFileSync(piSub, ["-p", "task"], {
-		cwd: directory,
+		cwd: link,
 		encoding: "utf8",
-		env: { ...process.env, PATH: `${root}${delimiter}${process.env.PATH}`, PI_SESSION_FILE: "", ...env },
+		env: { ...process.env, PATH: `${root}${delimiter}${process.env.PATH}`, PWD: link, PI_SESSION_FILE: "", ...env },
 	});
-	return { args: stdout.trimEnd().split("\n"), directory };
+	return { args: stdout.trimEnd().split("\n"), directory: realpathSync(directory) };
 }
 
 afterEach(() => {
