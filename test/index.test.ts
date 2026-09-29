@@ -155,14 +155,18 @@ describe("monitor extension", () => {
 		expect(mocks.managers[0]).toMatchObject({ sessionDir: "/tmp/sessions" });
 	});
 
-	it("starts monitors in the session cwd", async () => {
+	it("starts monitors in the session cwd with the session file for pi-sub", async () => {
 		const { tools } = await setup();
 		const result = await tools.monitor.execute("call-1", { command: "printf hello" }, undefined, undefined, {
 			cwd: "/tmp/parent",
 			isProjectTrusted: () => true,
+			sessionManager: { getSessionFile: () => "/tmp/sessions/parent.jsonl" },
 		} as never);
 		expect(mocks.run).toHaveBeenCalledOnce();
-		expect(mocks.run.mock.calls[0][1]).toMatchObject({ cwd: "/tmp/parent" });
+		expect(mocks.run.mock.calls[0][1]).toMatchObject({
+			cwd: "/tmp/parent",
+			env: { PI_SESSION_FILE: "/tmp/sessions/parent.jsonl" },
+		});
 		expect(result.content[0].text).toContain("Monitor started");
 	});
 

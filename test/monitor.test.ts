@@ -40,8 +40,8 @@ function node(source: string): string[] {
 	return [process.execPath, "-e", source];
 }
 
-function start(harness: Harness, source: string, stdin?: string): Promise<RunSnapshot> {
-	return harness.manager.run(node(source), { cwd: harness.directory, ...(stdin === undefined ? {} : { stdin }) });
+function start(harness: Harness, source: string, stdin?: string, env: NodeJS.ProcessEnv = process.env): Promise<RunSnapshot> {
+	return harness.manager.run(node(source), { cwd: harness.directory, env, ...(stdin === undefined ? {} : { stdin }) });
 }
 
 function status(manager: MonitorManager, id: string): RunSnapshot {
@@ -271,6 +271,17 @@ describe("monitor runs", () => {
 		await harness.manager.shutdown();
 		await expectNoFile(leaked);
 	}, 10_000);
+
+	it("runs the command with the given environment", async () => {
+		const harness = createHarness();
+		const started = await start(harness, "process.stdout.write(process.env.PI_SESSION_FILE);", undefined, {
+			...process.env,
+			PI_SESSION_FILE: "/sessions/parent.jsonl",
+		});
+		const result = await finish(harness, started.id);
+
+		expect(readFileSync(result.stdoutPath, "utf8")).toBe("/sessions/parent.jsonl");
+	});
 
 	it("passes stdin and closes the stream", async () => {
 		const harness = createHarness();

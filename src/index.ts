@@ -63,7 +63,12 @@ function registerTools(pi: ExtensionAPI, manager: MonitorManager): void {
 			const command = prefix ? `${prefix}\n${params.command}` : params.command;
 			const run = await manager.run(
 				shell.commandTransport === "stdin" ? [shell.shell, ...shell.args] : [shell.shell, ...shell.args, command],
-				{ cwd: ctx.cwd, ...(shell.commandTransport === "stdin" ? { stdin: command } : {}) },
+				{
+					cwd: ctx.cwd,
+					// Pi exports the session file only to its own bash tool; pi-sub needs it here too.
+					env: { ...process.env, PI_SESSION_FILE: ctx.sessionManager.getSessionFile() },
+					...(shell.commandTransport === "stdin" ? { stdin: command } : {}),
+				},
 			);
 			return {
 				content: [{ type: "text", text: `Monitor started.\n\nID: ${run.id}\nStdout: ${run.stdoutPath}\nStderr: ${run.stderrPath}` }],

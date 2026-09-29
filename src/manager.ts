@@ -49,7 +49,7 @@ export class MonitorManager {
 		return Array.from(this.runs.values(), (run) => this.snapshot(run));
 	}
 
-	async run(argv: string[], options: { cwd: string; stdin?: string }): Promise<RunSnapshot> {
+	async run(argv: string[], options: { cwd: string; env: NodeJS.ProcessEnv; stdin?: string }): Promise<RunSnapshot> {
 		if (this.shuttingDown) throw new Error("Monitor manager is shutting down");
 		if (this.list().filter((run) => run.status === "starting" || run.status === "running").length >= 8) {
 			throw new Error("Maximum of 8 monitors already running");
@@ -71,7 +71,7 @@ export class MonitorManager {
 		};
 		this.runs.set(id, run);
 		this.options.onUpdate();
-		const starting = this.launch(run, options.stdin);
+		const starting = this.launch(run, options.env, options.stdin);
 		this.starts.add(starting);
 		try {
 			return await starting;
@@ -96,7 +96,7 @@ export class MonitorManager {
 		]);
 	}
 
-	private async launch(run: RunRecord, stdin?: string): Promise<RunSnapshot> {
+	private async launch(run: RunRecord, env: NodeJS.ProcessEnv, stdin?: string): Promise<RunSnapshot> {
 		const files: number[] = [];
 		try {
 			for (const path of [run.stdoutPath, run.stderrPath]) files.push(openSync(path, "wx", 0o600));
@@ -114,6 +114,7 @@ export class MonitorManager {
 			run.outputTimer = setInterval(run.readOutput, 100);
 			const child = spawn(run.argv[0], run.argv.slice(1), {
 				cwd: run.cwd,
+				env,
 				stdio: [stdin === undefined ? "ignore" : "pipe", files[0], files[1]],
 				detached: process.platform !== "win32",
 				windowsHide: true,
