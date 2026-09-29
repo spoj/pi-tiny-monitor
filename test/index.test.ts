@@ -21,13 +21,11 @@ import {
 const mocks = vi.hoisted(() => {
 	const runSnapshot = {
 		id: "run-1",
-		argv: ["sh", "-c", "work"],
-		cwd: "/tmp/parent",
 		logPath: "/tmp/pi-run-1.log",
 		status: "running",
 	};
 	const run = vi.fn(async (_argv: string[], _options: unknown) => runSnapshot);
-	const stop = vi.fn(async (_id: string) => ({ ...runSnapshot, status: "stopped" }));
+	const stop = vi.fn(async (_id: string) => undefined);
 	const shutdown = vi.fn(async () => undefined);
 	const managers: Array<{ onOutput: (run: any, chunk: any) => void }> = [];
 	class FakeManager {

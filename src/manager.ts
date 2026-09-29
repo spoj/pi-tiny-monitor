@@ -10,16 +10,16 @@ export type RunStatus = "starting" | "running" | "completed" | "failed" | "stopp
 
 export type RunSnapshot = {
 	id: string;
-	argv: string[];
-	cwd: string;
 	logPath: string;
-	pid?: number;
 	status: RunStatus;
 	exitCode?: number;
 	signal?: NodeJS.Signals;
 };
 
 type RunRecord = RunSnapshot & {
+	argv: string[];
+	cwd: string;
+	pid?: number;
 	finishing?: Promise<void>;
 	process?: ChildProcess;
 	output: LiveOutput;
@@ -77,12 +77,11 @@ export class MonitorManager {
 		}
 	}
 
-	async stop(id: string): Promise<RunSnapshot> {
+	async stop(id: string): Promise<void> {
 		const run = this.runs.get(id);
 		if (!run) throw new Error(`Unknown monitor: ${id}`);
 		if (run.finishing) throw new Error(`${id} is not running`);
 		await this.finish(run, "stopped");
-		return this.snapshot(run);
 	}
 
 	async shutdown(): Promise<void> {
@@ -173,9 +172,7 @@ export class MonitorManager {
 	}
 
 	private snapshot(run: RunRecord): RunSnapshot {
-		const { id, argv, cwd, logPath, status, pid, exitCode, signal } = run;
-		return { id, argv: [...argv], cwd, logPath, status,
-			...(pid ? { pid } : {}), ...(exitCode !== undefined ? { exitCode } : {}), ...(signal ? { signal } : {}),
-		};
+		const { id, logPath, status, exitCode, signal } = run;
+		return { id, logPath, status, exitCode, signal };
 	}
 }

@@ -71,7 +71,7 @@ function registerTools(pi: ExtensionAPI, manager: MonitorManager): void {
 			);
 			return {
 				content: [{ type: "text", text: `Monitor started.\n\nID: ${run.id}\nLog: ${run.logPath}` }],
-				details: run,
+				details: undefined,
 			};
 		},
 	});
@@ -82,8 +82,8 @@ function registerTools(pi: ExtensionAPI, manager: MonitorManager): void {
 		description: "Stops a running monitor by ID.",
 		parameters: monitorStopTool,
 		async execute(_toolCallId, params) {
-			const stopped = await manager.stop(params.id);
-			return { content: [{ type: "text", text: `Monitor stopped.\n\nID: ${stopped.id}` }], details: stopped };
+			await manager.stop(params.id);
+			return { content: [{ type: "text", text: `Monitor stopped.\n\nID: ${params.id}` }], details: undefined };
 		},
 	});
 }

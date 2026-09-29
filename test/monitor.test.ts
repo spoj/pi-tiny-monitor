@@ -178,9 +178,9 @@ describe("monitor runs", () => {
 		await waitFor(() => existsSync(ready));
 		await new Promise((resolve) => setImmediate(resolve));
 
-		const stopped = await harness.manager.stop(started.id);
+		await harness.manager.stop(started.id);
 		const chunks = outputsFor(harness.outputs, started.id);
-		expect(stopped).toMatchObject({ status: "stopped" });
+		expect(status(harness.manager, started.id)).toMatchObject({ status: "stopped" });
 		expect(chunks).toHaveLength(1);
 		expect(chunks[0].chunk).toMatchObject({
 			text: "pending",
