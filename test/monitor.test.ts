@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -35,12 +35,13 @@ function createHarness(): Harness {
 	return harness;
 }
 
-function node(source: string): string[] {
-	return [process.execPath, "-e", source];
-}
+let scripts = 0;
 
 function start(harness: Harness, source: string, stdin?: string, env: NodeJS.ProcessEnv = process.env): RunSnapshot {
-	return harness.manager.run(node(source), { cwd: harness.directory, env, ...(stdin === undefined ? {} : { stdin }) });
+	// A script file keeps large sources off the command line, which Windows caps at 32,767 characters.
+	const script = join(harness.directory, `script-${scripts++}.cjs`);
+	writeFileSync(script, source);
+	return harness.manager.run([process.execPath, script], { cwd: harness.directory, env, ...(stdin === undefined ? {} : { stdin }) });
 }
 
 function status(manager: MonitorManager, id: string): RunSnapshot {
