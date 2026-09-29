@@ -5,7 +5,7 @@
   "type": "module",
   "keywords": ["pi-package"],
   "license": "MIT",
-  "files": ["README.md", "extensions", "src", "bin"],
+  "files": ["README.md", "src", "bin"],
   "bin": {
     "pi-sub": "./bin/pi-sub"
   },
@@ -14,7 +14,7 @@
     "url": "git+https://github.com/spoj/pi-tiny-fork.git"
   },
   "pi": {
-    "extensions": ["./extensions/monitor.ts", "./extensions/replay.ts"]
+    "extensions": ["./src/index.ts"]
   },
   "scripts": {
     "test": "vitest run",

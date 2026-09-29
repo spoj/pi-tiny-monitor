@@ -32,33 +32,16 @@ pi-sub -p "Review src/ for correctness bugs. Report findings with file paths."
 
 Run it through `monitor` to keep the parent turn available; the child's final answer arrives as monitor output. `pi-sub` writes the child's session header beside the parent session (`monitor` and Pi's bash tool export the parent as `PI_SESSION_FILE`), then runs `pi --session FILE`. Outside a Pi session it runs plain `pi`. It is a POSIX shell script and needs `uuidgen`.
 
-## Context replay
-
-The package also contains a separate `replay` extension. It rewrites compatible assistant messages for configured model families. Configure families with `replayCompatibleModels` in `~/.pi/agent/settings.json`:
-
-```json
-{
-  "replayCompatibleModels": [
-    [
-      "github-copilot/gpt-5.6-sol",
-      "github-copilot/gpt-5.6-luna"
-    ]
-  ]
-}
-```
-
-Families use `provider/model` IDs. Messages from another API are left to Pi's normal conversion.
-
 ## Install
 
 ```bash
 pi install git:github.com/spoj/pi-tiny-fork
 ```
 
-Or try the local extensions:
+Or try it locally:
 
 ```bash
-pi -e ./extensions/monitor.ts -e ./extensions/replay.ts
+pi -e ./src/index.ts
 ```
 
 ## Development
