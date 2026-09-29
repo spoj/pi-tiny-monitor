@@ -147,6 +147,7 @@ describe("monitor extension", () => {
 		expect(Object.keys(tools)).toEqual(["monitor", "monitor_stop"]);
 		expect(tools.monitor.parameters.required).toEqual(["command"]);
 		expect(tools.monitor_stop.parameters.required).toEqual(["id"]);
+		expect([tools.monitor.exposure, tools.monitor_stop.exposure]).toEqual(["model-only", "model-only"]);
 		expect(pi.on.mock.calls.map(([name]) => name)).toEqual(["message_start", "agent_settled", "session_start", "session_shutdown"]);
 		expect(mocks.managers).toHaveLength(1);
 	});

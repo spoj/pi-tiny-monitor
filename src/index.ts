@@ -55,6 +55,8 @@ function registerTools(pi: ExtensionAPI, manager: MonitorManager): void {
 			"To delegate to a child Pi agent, monitor `pi-sub -p \"TASK\"`; it accepts pi flags and records this session as the child's parent.",
 		],
 		parameters: monitorTool,
+		// Updates arrive as later messages, not in the result, so codemode scripts cannot use monitors.
+		exposure: "model-only",
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 			const settings = SettingsManager.create(ctx.cwd, undefined, { projectTrusted: ctx.isProjectTrusted() });
 			const shell = getShellConfig(settings.getShellPath());
@@ -81,6 +83,7 @@ function registerTools(pi: ExtensionAPI, manager: MonitorManager): void {
 		label: "Monitor Stop",
 		description: "Stops a running monitor by ID.",
 		parameters: monitorStopTool,
+		exposure: "model-only",
 		async execute(_toolCallId, params) {
 			await manager.stop(params.id);
 			return { content: [{ type: "text", text: `Monitor stopped.\n\nID: ${params.id}` }], details: undefined };
