@@ -27,8 +27,6 @@ function terminate(pid: number | undefined, child: ChildProcess | undefined, sig
 
 export async function stopProcessTree(child: ChildProcess | undefined, pid?: number): Promise<void> {
 	child?.stdin?.destroy();
-	child?.stdout?.destroy();
-	child?.stderr?.destroy();
 	const targetPid = pid ?? child?.pid;
 	if (!targetPid && !child) return;
 
