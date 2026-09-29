@@ -1,4 +1,4 @@
-# pi-tiny-fork
+# pi-tiny-monitor
 
 A Pi package for session-owned background commands and parent-linked child Pi sessions.
 
@@ -35,7 +35,7 @@ Run it through `monitor` to keep the parent turn available; the child's final an
 ## Install
 
 ```bash
-pi install git:github.com/spoj/pi-tiny-fork
+pi install git:github.com/spoj/pi-tiny-monitor
 ```
 
 Or try it locally:

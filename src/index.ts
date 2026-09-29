@@ -11,7 +11,7 @@ import {
 import { MonitorManager, type RunSnapshot } from "./manager.ts";
 import type { LiveChunk } from "./live-output.ts";
 
-const WIDGET_KEY = "pi-tiny-fork";
+const WIDGET_KEY = "pi-tiny-monitor";
 
 const monitorTool = Type.Object({
 	command: Type.String({ minLength: 1, description: "Shell command to run in the background" }),
@@ -88,7 +88,7 @@ function registerTools(pi: ExtensionAPI, manager: MonitorManager): void {
 	});
 }
 
-export default function piTinyFork(pi: ExtensionAPI): void {
+export default function piTinyMonitor(pi: ExtensionAPI): void {
 	let shutdown: (() => Promise<void>) | undefined;
 	let pending: TextContent[] | undefined;
 
@@ -99,14 +99,14 @@ export default function piTinyFork(pi: ExtensionAPI): void {
 		pending.push({ type: "text", text });
 		if (!queued) {
 			pi.sendMessage(
-				{ customType: "pi-tiny-fork", content: pending, display: true },
+				{ customType: "pi-tiny-monitor", content: pending, display: true },
 				{ deliverAs: "steer", triggerTurn: true },
 			);
 		}
 	}
 
 	pi.on("message_start", ({ message }) => {
-		if (message.role === "custom" && message.customType === "pi-tiny-fork" && message.content === pending) {
+		if (message.role === "custom" && message.customType === "pi-tiny-monitor" && message.content === pending) {
 			pending = undefined;
 		}
 	});

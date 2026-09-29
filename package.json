@@ -1,5 +1,5 @@
 {
-  "name": "pi-tiny-fork",
+  "name": "pi-tiny-monitor",
   "version": "0.1.0",
   "description": "Background monitored commands and parent-linked child Pi sessions",
   "type": "module",
@@ -11,7 +11,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/spoj/pi-tiny-fork.git"
+    "url": "git+https://github.com/spoj/pi-tiny-monitor.git"
   },
   "pi": {
     "extensions": ["./src/index.ts"]

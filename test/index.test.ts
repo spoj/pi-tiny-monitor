@@ -47,7 +47,7 @@ function output(text: string, id = "run-1") {
 const cleanups: Array<() => Promise<void>> = [];
 
 async function setup() {
-	const { default: piTinyFork } = await import("../src/index.ts");
+	const { default: piTinyMonitor } = await import("../src/index.ts");
 	const pi = { registerTool: vi.fn(), on: vi.fn(), sendMessage: vi.fn() };
 	const ctx = {
 		cwd: "/tmp/parent",
@@ -55,7 +55,7 @@ async function setup() {
 		isIdle: vi.fn(() => true),
 		ui: { setWidget: vi.fn() },
 	};
-	piTinyFork(pi as never);
+	piTinyMonitor(pi as never);
 	const event = (name: string) => pi.on.mock.calls.find(([type]) => type === name)?.[1];
 	await event("session_start")?.({}, ctx);
 	cleanups.push(async () => { await event("session_shutdown")?.({}, ctx); });
@@ -69,8 +69,8 @@ async function setup() {
 }
 
 async function setupAgent() {
-	const { default: piTinyFork } = await import("../src/index.ts");
-	const cwd = mkdtempSync(join(tmpdir(), "pi-tiny-fork-delivery-"));
+	const { default: piTinyMonitor } = await import("../src/index.ts");
+	const cwd = mkdtempSync(join(tmpdir(), "pi-tiny-monitor-delivery-"));
 	const settingsManager = SettingsManager.inMemory({
 		steeringMode: "one-at-a-time",
 		compaction: { enabled: false },
@@ -79,7 +79,7 @@ async function setupAgent() {
 	const resourceLoader = new DefaultResourceLoader({
 		cwd, agentDir: cwd, settingsManager,
 		noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true,
-		extensionFactories: [piTinyFork],
+		extensionFactories: [piTinyMonitor],
 	});
 	await resourceLoader.reload();
 	const model = getModel("anthropic", "claude-sonnet-4-5")!;
@@ -297,7 +297,7 @@ describe("batched delivery through AgentSession", () => {
 		for (let i = 0; i < 25; i++) expect(delivered).toContain(`chunk ${i}`);
 		expect(delivered).toContain("review ready");
 		expect(delivered).not.toContain("human two");
-		const entries = session.sessionManager.getEntries().filter((entry) => entry.type === "custom_message" && entry.customType === "pi-tiny-fork");
+		const entries = session.sessionManager.getEntries().filter((entry) => entry.type === "custom_message" && entry.customType === "pi-tiny-monitor");
 		expect(entries).toHaveLength(1);
 		expect(JSON.stringify(entries[0])).toContain("review ready");
 		expect(JSON.stringify(messageStarts)).toContain("review ready");
@@ -357,6 +357,6 @@ describe("batched delivery through AgentSession", () => {
 		finish(1);
 		await active;
 		expect(streams).toHaveLength(2);
-		expect(session.sessionManager.getEntries().filter((entry) => entry.type === "custom_message" && entry.customType === "pi-tiny-fork")).toHaveLength(1);
+		expect(session.sessionManager.getEntries().filter((entry) => entry.type === "custom_message" && entry.customType === "pi-tiny-monitor")).toHaveLength(1);
 	});
 });
