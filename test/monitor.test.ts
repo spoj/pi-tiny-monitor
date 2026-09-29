@@ -39,7 +39,7 @@ function node(source: string): string[] {
 	return [process.execPath, "-e", source];
 }
 
-function start(harness: Harness, source: string, stdin?: string, env: NodeJS.ProcessEnv = process.env): Promise<RunSnapshot> {
+function start(harness: Harness, source: string, stdin?: string, env: NodeJS.ProcessEnv = process.env): RunSnapshot {
 	return harness.manager.run(node(source), { cwd: harness.directory, env, ...(stdin === undefined ? {} : { stdin }) });
 }
 
@@ -242,11 +242,19 @@ describe("monitor runs", () => {
 
 	it("allows eight active monitors and rejects the ninth", async () => {
 		const harness = createHarness();
-		const runs = await Promise.all(Array.from({ length: 8 }, () => start(harness, "setInterval(() => {}, 1000);")));
+		const runs = Array.from({ length: 8 }, () => start(harness, "setInterval(() => {}, 1000);"));
 
 		expect(runs).toHaveLength(8);
 		expect(harness.manager.list().filter((run) => run.status === "running")).toHaveLength(8);
-		await expect(start(harness, "setInterval(() => {}, 1000);")).rejects.toThrow(/8/);
+		expect(() => start(harness, "setInterval(() => {}, 1000);")).toThrow(/8/);
+	});
+
+	it("rejects a command that cannot start", async () => {
+		const harness = createHarness();
+		expect(() => harness.manager.run([join(harness.directory, "missing-shell")], { cwd: harness.directory, env: process.env }))
+			.toThrow("Could not start");
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		expect(harness.manager.list()).toEqual([]);
 	});
 
 	it.skipIf(process.platform === "win32")("kills descendants during shutdown", async () => {

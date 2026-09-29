@@ -3,8 +3,7 @@ import { join } from "node:path";
 
 const KILL_GRACE_MS = 1_000;
 
-function processGone(pid: number | undefined, child: ChildProcess | undefined): boolean {
-	if (!pid) return !child || child.exitCode !== null || child.signalCode != null;
+function processGone(pid: number): boolean {
 	try {
 		process.kill(-pid, 0);
 		return false;
@@ -13,35 +12,26 @@ function processGone(pid: number | undefined, child: ChildProcess | undefined): 
 	}
 }
 
-function terminate(pid: number | undefined, child: ChildProcess | undefined, signal: NodeJS.Signals): void {
-	if (!pid) {
-		child?.kill(signal);
-		return;
-	}
+function terminate(pid: number, child: ChildProcess, signal: NodeJS.Signals): void {
 	try {
 		process.kill(-pid, signal);
 	} catch {
-		child?.kill(signal);
+		child.kill(signal);
 	}
 }
 
-export async function stopProcessTree(child: ChildProcess | undefined, pid?: number): Promise<void> {
-	child?.stdin?.destroy();
-	const targetPid = pid ?? child?.pid;
-	if (!targetPid && !child) return;
+export async function stopProcessTree(child: ChildProcess): Promise<void> {
+	child.stdin?.destroy();
+	const pid = child.pid!;
 
 	if (process.platform === "win32") {
-		if (targetPid === undefined) {
-			child?.kill("SIGTERM");
-			return;
-		}
 		await new Promise<void>((resolve) => {
 			execFile(
 				join(process.env.SystemRoot ?? "C:\\Windows", "System32", "taskkill.exe"),
-				["/pid", String(targetPid), "/t", "/f"],
+				["/pid", String(pid), "/t", "/f"],
 				{ windowsHide: true },
 				(error: Error | null) => {
-					if (error) child?.kill("SIGTERM");
+					if (error) child.kill("SIGTERM");
 					resolve();
 				},
 			);
@@ -49,13 +39,13 @@ export async function stopProcessTree(child: ChildProcess | undefined, pid?: num
 		return;
 	}
 
-	if (processGone(targetPid, child)) return;
-	terminate(targetPid, child, "SIGTERM");
+	if (processGone(pid)) return;
+	terminate(pid, child, "SIGTERM");
 	const startedAt = Date.now();
 	while (true) {
-		if (processGone(targetPid, child)) return;
+		if (processGone(pid)) return;
 		if (Date.now() - startedAt >= KILL_GRACE_MS) {
-			terminate(targetPid, child, "SIGKILL");
+			terminate(pid, child, "SIGKILL");
 			return;
 		}
 		await new Promise<void>((resolve) => setTimeout(resolve, 25));

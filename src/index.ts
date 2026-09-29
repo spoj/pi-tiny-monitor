@@ -22,7 +22,7 @@ const monitorStopTool = Type.Object({
 });
 
 function renderWidget(ctx: ExtensionContext, manager: MonitorManager): void {
-	const active = manager.list().filter((run) => run.status === "starting" || run.status === "running").length;
+	const active = manager.list().filter((run) => run.status === "running").length;
 	ctx.ui.setWidget(WIDGET_KEY, active ? [`${active} monitors active`] : undefined);
 }
 
@@ -60,7 +60,7 @@ function registerTools(pi: ExtensionAPI, manager: MonitorManager): void {
 			const shell = getShellConfig(settings.getShellPath());
 			const prefix = settings.getShellCommandPrefix();
 			const command = prefix ? `${prefix}\n${params.command}` : params.command;
-			const run = await manager.run(
+			const run = manager.run(
 				shell.commandTransport === "stdin" ? [shell.shell, ...shell.args] : [shell.shell, ...shell.args, command],
 				{
 					cwd: ctx.cwd,

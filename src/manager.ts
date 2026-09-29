@@ -1,12 +1,12 @@
 import { randomBytes } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
-import { closeSync, fstatSync, openSync, readSync } from "node:fs";
+import { closeSync, fstatSync, openSync, readSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stopProcessTree } from "./process.ts";
 import { LiveOutput, type LiveChunk } from "./live-output.ts";
 
-export type RunStatus = "starting" | "running" | "completed" | "failed" | "stopped";
+export type RunStatus = "running" | "completed" | "failed" | "stopped";
 
 export type RunSnapshot = {
 	id: string;
@@ -17,15 +17,12 @@ export type RunSnapshot = {
 };
 
 type RunRecord = RunSnapshot & {
-	argv: string[];
-	cwd: string;
-	pid?: number;
-	finishing?: Promise<void>;
-	process?: ChildProcess;
+	process: ChildProcess;
 	output: LiveOutput;
-	outputFile?: number;
-	outputTimer?: NodeJS.Timeout;
+	outputFile: number;
+	outputTimer: NodeJS.Timeout;
 	readOutput?: () => void;
+	finishing?: Promise<void>;
 };
 
 type ManagerOptions = {
@@ -33,13 +30,8 @@ type ManagerOptions = {
 	onOutput: (run: RunSnapshot, chunk: LiveChunk & { streamEnded?: boolean }) => void;
 };
 
-function errorText(error: unknown): string {
-	return error instanceof Error ? error.message : String(error);
-}
-
 export class MonitorManager {
 	private readonly runs = new Map<string, RunRecord>();
-	private readonly starts = new Set<Promise<unknown>>();
 	private shuttingDown = false;
 
 	constructor(private readonly options: ManagerOptions) {}
@@ -48,16 +40,50 @@ export class MonitorManager {
 		return Array.from(this.runs.values(), (run) => this.snapshot(run));
 	}
 
-	async run(argv: string[], options: { cwd: string; env: NodeJS.ProcessEnv; stdin?: string }): Promise<RunSnapshot> {
+	run(argv: string[], options: { cwd: string; env: NodeJS.ProcessEnv; stdin?: string }): RunSnapshot {
 		if (this.shuttingDown) throw new Error("Monitor manager is shutting down");
-		if (this.list().filter((run) => run.status === "starting" || run.status === "running").length >= 8) {
+		if (this.list().filter((run) => run.status === "running").length >= 8) {
 			throw new Error("Maximum of 8 monitors already running");
 		}
 		const id = `run-${randomBytes(3).toString("hex")}`;
+		const logPath = join(tmpdir(), `pi-${id}.log`);
+		const log = openSync(logPath, "wx", 0o600);
+		let child: ChildProcess;
+		try {
+			child = spawn(argv[0], argv.slice(1), {
+				cwd: options.cwd,
+				env: options.env,
+				stdio: [options.stdin === undefined ? "ignore" : "pipe", log, log],
+				detached: process.platform !== "win32",
+				windowsHide: true,
+			});
+		} finally {
+			closeSync(log);
+		}
+		// A failed start leaves pid unset and still emits "error", which would crash Pi if unhandled.
+		child.on("error", () => {});
+		if (child.pid === undefined) {
+			rmSync(logPath);
+			throw new Error(`Could not start ${argv[0]}`);
+		}
+		if (options.stdin !== undefined) {
+			child.stdin!.on("error", () => {});
+			child.stdin!.end(options.stdin);
+		}
+
+		const file = openSync(logPath, "r");
+		let offset = 0;
+		const readOutput = () => {
+			const size = fstatSync(file).size - offset;
+			if (size === 0) return;
+			const buffer = Buffer.alloc(Math.min(size, 50 * 1024 + 1));
+			const length = readSync(file, buffer, 0, buffer.length, offset);
+			offset += length;
+			run.output.append(buffer.subarray(0, length));
+		};
 		const run: RunRecord = {
-			id, argv: [...argv], cwd: options.cwd,
-			logPath: join(tmpdir(), `pi-${id}.log`),
-			status: "starting",
+			id, logPath, status: "running", process: child,
+			outputFile: file, readOutput, outputTimer: setInterval(readOutput, 100),
 			output: new LiveOutput((chunk) => {
 				if (chunk.suppressed) {
 					clearInterval(run.outputTimer);
@@ -66,15 +92,15 @@ export class MonitorManager {
 				if (!this.shuttingDown) this.options.onOutput(this.snapshot(run), chunk);
 			}),
 		};
+		child.once("exit", (code, signal) => {
+			if (run.finishing) return;
+			run.exitCode = code ?? undefined;
+			run.signal = signal ?? undefined;
+			void this.finish(run, code === 0 ? "completed" : "failed");
+		});
 		this.runs.set(id, run);
 		this.options.onUpdate();
-		const starting = this.launch(run, options.env, options.stdin);
-		this.starts.add(starting);
-		try {
-			return await starting;
-		} finally {
-			this.starts.delete(starting);
-		}
+		return this.snapshot(run);
 	}
 
 	async stop(id: string): Promise<void> {
@@ -86,61 +112,7 @@ export class MonitorManager {
 
 	async shutdown(): Promise<void> {
 		this.shuttingDown = true;
-		await Promise.all([
-			...Array.from(this.runs.values(), (run) => this.finish(run, "stopped")),
-			...Array.from(this.starts, (start) => start.catch(() => undefined)),
-		]);
-	}
-
-	private async launch(run: RunRecord, env: NodeJS.ProcessEnv, stdin?: string): Promise<RunSnapshot> {
-		const files: number[] = [];
-		try {
-			files.push(openSync(run.logPath, "wx", 0o600));
-			const file = openSync(run.logPath, "r");
-			run.outputFile = file;
-			let offset = 0;
-			run.readOutput = () => {
-				const size = fstatSync(file).size - offset;
-				if (size === 0) return;
-				const buffer = Buffer.alloc(Math.min(size, 50 * 1024 + 1));
-				const length = readSync(file, buffer, 0, buffer.length, offset);
-				offset += length;
-				run.output.append(buffer.subarray(0, length));
-			};
-			run.outputTimer = setInterval(run.readOutput, 100);
-			const child = spawn(run.argv[0], run.argv.slice(1), {
-				cwd: run.cwd,
-				env,
-				stdio: [stdin === undefined ? "ignore" : "pipe", files[0], files[0]],
-				detached: process.platform !== "win32",
-				windowsHide: true,
-			});
-			run.process = child;
-			if (stdin !== undefined) {
-				child.stdin!.on("error", () => {});
-				child.stdin!.end(stdin);
-			}
-			child.once("exit", (code, signal) => {
-				if (run.finishing) return;
-				run.exitCode = code ?? undefined;
-				run.signal = signal ?? undefined;
-				void this.finish(run, code === 0 ? "completed" : "failed");
-			});
-			await new Promise<void>((resolve, reject) => {
-				child.once("spawn", resolve);
-				child.once("error", reject);
-			});
-			if (this.shuttingDown || run.finishing) throw new Error("Monitor was stopped during startup");
-			run.pid = child.pid;
-			run.status = "running";
-			this.options.onUpdate();
-			return this.snapshot(run);
-		} catch (error) {
-			await this.finish(run, "failed");
-			throw new Error(`Could not start ${run.id}: ${errorText(error)}`);
-		} finally {
-			for (const file of files) closeSync(file);
-		}
+		await Promise.all(Array.from(this.runs.values(), (run) => this.finish(run, "stopped")));
 	}
 
 	private finish(run: RunRecord, status: RunStatus): Promise<void> {
@@ -149,7 +121,7 @@ export class MonitorManager {
 		run.finishing = Promise.resolve().then(async () => {
 			let chunk: LiveChunk | undefined;
 			try {
-				await stopProcessTree(run.process, run.pid);
+				await stopProcessTree(run.process);
 				run.readOutput?.();
 				chunk = run.output.finish();
 				run.status = status;
@@ -157,9 +129,7 @@ export class MonitorManager {
 				run.status = "failed";
 			} finally {
 				run.output.dispose();
-				if (run.outputFile !== undefined) closeSync(run.outputFile);
-				run.outputFile = undefined;
-				run.readOutput = undefined;
+				closeSync(run.outputFile);
 			}
 			if (!this.shuttingDown && (run.status !== "stopped" || chunk?.text)) {
 				this.options.onOutput(this.snapshot(run), {

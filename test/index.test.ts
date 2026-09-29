@@ -24,7 +24,7 @@ const mocks = vi.hoisted(() => {
 		logPath: "/tmp/pi-run-1.log",
 		status: "running",
 	};
-	const run = vi.fn(async (_argv: string[], _options: unknown) => runSnapshot);
+	const run = vi.fn((_argv: string[], _options: unknown) => runSnapshot);
 	const stop = vi.fn(async (_id: string) => undefined);
 	const shutdown = vi.fn(async () => undefined);
 	const managers: Array<{ onOutput: (run: any, chunk: any) => void }> = [];
