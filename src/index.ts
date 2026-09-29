@@ -32,13 +32,13 @@ function liveText(run: RunSnapshot, chunk: LiveChunk & { streamEnded?: boolean }
 		chunk.endsWithPartialLine ? "last line incomplete" : undefined,
 	].filter((flag): flag is string => flag !== undefined);
 	if (chunk.suppressed) {
-		flags.push(`suppressed: ${chunk.text}`, `stdout log: ${run.stdoutPath}`);
+		flags.push(`suppressed: ${chunk.text}`, `log: ${run.logPath}`);
 	}
 	if (chunk.streamEnded) {
 		flags.push(`status: ${run.status}`);
 		if (run.exitCode !== undefined) flags.push(`exit code: ${run.exitCode}`);
 		if (run.signal !== undefined) flags.push(`signal: ${run.signal}`);
-		flags.push(`stdout: ${run.stdoutPath}`, `stderr: ${run.stderrPath}`);
+		flags.push(`log: ${run.logPath}`);
 	}
 	return `[${[run.id, ...flags].join(" · ")}]${chunk.suppressed ? "" : `\n${chunk.text}`}`;
 }
@@ -47,12 +47,11 @@ function registerTools(pi: ExtensionAPI, manager: MonitorManager): void {
 	pi.registerTool({
 		name: "monitor",
 		label: "Monitor",
-		description: "Runs a background shell command and delivers bounded stdout updates while it runs, then a final status.",
-		promptSnippet: "Run a background shell command with live stdout updates",
+		description: "Runs a background shell command and delivers bounded output updates while it runs, then a final status.",
+		promptSnippet: "Run a background shell command with live output updates",
 		promptGuidelines: [
 			"Use monitor for long-running or noisy shell commands when the current turn should remain available.",
-			"Monitor output arrives in timed chunks; chunk boundaries are not newline boundaries. Use the continuation and incomplete-line headers, and read the saved stdout log for complete output.",
-			"Monitor streams stdout only. Stderr is retained in the saved stderr log and does not wake the agent.",
+			"Monitor output arrives in timed chunks; chunk boundaries are not newline boundaries. Use the continuation and incomplete-line headers, and read the saved log for complete output.",
 			"To delegate to a child Pi agent, monitor `pi-sub -p \"TASK\"`; it accepts pi flags and records this session as the child's parent.",
 		],
 		parameters: monitorTool,
@@ -71,7 +70,7 @@ function registerTools(pi: ExtensionAPI, manager: MonitorManager): void {
 				},
 			);
 			return {
-				content: [{ type: "text", text: `Monitor started.\n\nID: ${run.id}\nStdout: ${run.stdoutPath}\nStderr: ${run.stderrPath}` }],
+				content: [{ type: "text", text: `Monitor started.\n\nID: ${run.id}\nLog: ${run.logPath}` }],
 				details: run,
 			};
 		},
@@ -117,7 +116,6 @@ export default function piTinyFork(pi: ExtensionAPI): void {
 
 	pi.on("session_start", async (_event, ctx) => {
 		const manager = new MonitorManager({
-			sessionDir: ctx.sessionManager.getSessionDir(),
 			onUpdate: () => renderWidget(ctx, manager),
 			onOutput: (run, chunk) => notify(liveText(run, chunk)),
 		});

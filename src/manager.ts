@@ -1,6 +1,7 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
-import { closeSync, fstatSync, mkdirSync, openSync, readSync } from "node:fs";
+import { closeSync, fstatSync, openSync, readSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stopProcessTree } from "./process.ts";
 import { LiveOutput, type LiveChunk } from "./live-output.ts";
@@ -11,8 +12,7 @@ export type RunSnapshot = {
 	id: string;
 	argv: string[];
 	cwd: string;
-	stdoutPath: string;
-	stderrPath: string;
+	logPath: string;
 	pid?: number;
 	status: RunStatus;
 	exitCode?: number;
@@ -29,7 +29,6 @@ type RunRecord = RunSnapshot & {
 };
 
 type ManagerOptions = {
-	sessionDir: string;
 	onUpdate: () => void;
 	onOutput: (run: RunSnapshot, chunk: LiveChunk & { streamEnded?: boolean }) => void;
 };
@@ -54,12 +53,10 @@ export class MonitorManager {
 		if (this.list().filter((run) => run.status === "starting" || run.status === "running").length >= 8) {
 			throw new Error("Maximum of 8 monitors already running");
 		}
-		const id = `run-${randomUUID()}`;
-		const directory = join(this.options.sessionDir, "runs", id);
-		mkdirSync(directory, { recursive: true, mode: 0o700 });
+		const id = `run-${randomBytes(3).toString("hex")}`;
 		const run: RunRecord = {
 			id, argv: [...argv], cwd: options.cwd,
-			stdoutPath: join(directory, "stdout.log"), stderrPath: join(directory, "stderr.log"),
+			logPath: join(tmpdir(), `pi-${id}.log`),
 			status: "starting",
 			output: new LiveOutput((chunk) => {
 				if (chunk.suppressed) {
@@ -99,8 +96,8 @@ export class MonitorManager {
 	private async launch(run: RunRecord, env: NodeJS.ProcessEnv, stdin?: string): Promise<RunSnapshot> {
 		const files: number[] = [];
 		try {
-			for (const path of [run.stdoutPath, run.stderrPath]) files.push(openSync(path, "wx", 0o600));
-			const file = openSync(run.stdoutPath, "r");
+			files.push(openSync(run.logPath, "wx", 0o600));
+			const file = openSync(run.logPath, "r");
 			run.outputFile = file;
 			let offset = 0;
 			run.readOutput = () => {
@@ -115,7 +112,7 @@ export class MonitorManager {
 			const child = spawn(run.argv[0], run.argv.slice(1), {
 				cwd: run.cwd,
 				env,
-				stdio: [stdin === undefined ? "ignore" : "pipe", files[0], files[1]],
+				stdio: [stdin === undefined ? "ignore" : "pipe", files[0], files[0]],
 				detached: process.platform !== "win32",
 				windowsHide: true,
 			});
@@ -176,8 +173,8 @@ export class MonitorManager {
 	}
 
 	private snapshot(run: RunRecord): RunSnapshot {
-		const { id, argv, cwd, stdoutPath, stderrPath, status, pid, exitCode, signal } = run;
-		return { id, argv: [...argv], cwd, stdoutPath, stderrPath, status,
+		const { id, argv, cwd, logPath, status, pid, exitCode, signal } = run;
+		return { id, argv: [...argv], cwd, logPath, status,
 			...(pid ? { pid } : {}), ...(exitCode !== undefined ? { exitCode } : {}), ...(signal ? { signal } : {}),
 		};
 	}

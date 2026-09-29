@@ -23,14 +23,13 @@ const mocks = vi.hoisted(() => {
 		id: "run-1",
 		argv: ["sh", "-c", "work"],
 		cwd: "/tmp/parent",
-		stdoutPath: "/tmp/stdout.log",
-		stderrPath: "/tmp/stderr.log",
+		logPath: "/tmp/pi-run-1.log",
 		status: "running",
 	};
 	const run = vi.fn(async (_argv: string[], _options: unknown) => runSnapshot);
 	const stop = vi.fn(async (_id: string) => ({ ...runSnapshot, status: "stopped" }));
 	const shutdown = vi.fn(async () => undefined);
-	const managers: Array<{ sessionDir: string; onOutput: (run: any, chunk: any) => void }> = [];
+	const managers: Array<{ onOutput: (run: any, chunk: any) => void }> = [];
 	class FakeManager {
 		constructor(options: (typeof managers)[number]) { managers.push(options); }
 		list() { return []; }
@@ -56,7 +55,6 @@ async function setup() {
 		cwd: "/tmp/parent",
 		isProjectTrusted: () => true,
 		isIdle: vi.fn(() => true),
-		sessionManager: { getSessionDir: () => "/tmp/sessions" },
 		ui: { setWidget: vi.fn() },
 	};
 	piTinyFork(pi as never);
@@ -152,7 +150,7 @@ describe("monitor extension", () => {
 		expect(tools.monitor.parameters.required).toEqual(["command"]);
 		expect(tools.monitor_stop.parameters.required).toEqual(["id"]);
 		expect(pi.on.mock.calls.map(([name]) => name)).toEqual(["message_start", "agent_settled", "session_start", "session_shutdown"]);
-		expect(mocks.managers[0]).toMatchObject({ sessionDir: "/tmp/sessions" });
+		expect(mocks.managers).toHaveLength(1);
 	});
 
 	it("starts monitors in the session cwd with the session file for pi-sub", async () => {
@@ -217,7 +215,7 @@ describe("monitor extension", () => {
 			streamEnded: true,
 		});
 		const finalText = deliver().content;
-		expect(finalText).toContain("[run-1 · status: completed · exit code: 0 · stdout: /tmp/stdout.log · stderr: /tmp/stderr.log]");
+		expect(finalText).toContain("[run-1 · status: completed · exit code: 0 · log: /tmp/pi-run-1.log]");
 		expect(finalText.endsWith("]\n")).toBe(true);
 		expect(pi.sendMessage).toHaveBeenCalledTimes(2);
 	});
@@ -265,7 +263,7 @@ describe("monitor extension", () => {
 		expect(second.deliver().content).not.toContain("first session");
 	});
 
-	it("includes the suppression reason once with the stdout log", async () => {
+	it("includes the suppression reason once with the log", async () => {
 		const { deliver } = await setup();
 		mocks.managers[0].onOutput(mocks.runSnapshot, {
 			text: "output limit exceeded",
@@ -276,7 +274,7 @@ describe("monitor extension", () => {
 		const suppressed = deliver().content;
 		expect(suppressed.split("output limit exceeded")).toHaveLength(2);
 		expect(suppressed).toContain("suppressed:");
-		expect(suppressed).toContain("stdout log: /tmp/stdout.log");
+		expect(suppressed).toContain("log: /tmp/pi-run-1.log");
 	});
 });
 

@@ -27,7 +27,6 @@ function createHarness(): Harness {
 	const directory = mkdtempSync(join(tmpdir(), "pi-tiny-monitor-run-"));
 	const outputs: CapturedOutput[] = [];
 	const manager = new MonitorManager({
-		sessionDir: join(directory, "sessions"),
 		onUpdate: () => undefined,
 		onOutput: (run, chunk) => outputs.push({ run, chunk }),
 	});
@@ -77,24 +76,24 @@ async function expectNoFile(path: string, duration = 2_200): Promise<void> {
 afterEach(async () => {
 	for (const harness of harnesses.splice(0)) {
 		await harness.manager.shutdown();
+		for (const run of harness.manager.list()) rmSync(run.logPath, { force: true });
 		rmSync(harness.directory, { recursive: true, force: true });
 	}
 });
 
 describe("monitor runs", () => {
-	it("keeps exact stdout and stderr logs and streams stdout only", async () => {
+	it("keeps one exact log of stdout and stderr and streams both", async () => {
 		const harness = createHarness();
 		const stdout = `stdout-start\n${"s".repeat(20 * 1024)}stdout-tail\n`;
-		const stderr = `stderr-start\n${"e".repeat(60 * 1024)}stderr-tail`;
+		const stderr = `stderr-start\n${"e".repeat(10 * 1024)}stderr-tail`;
 		const started = await start(harness, `process.stdout.write(${JSON.stringify(stdout)}); process.stderr.write(${JSON.stringify(stderr)});`);
 		expect(started).toMatchObject({ status: "running" });
 		const result = await finish(harness, started.id);
 		const chunks = outputsFor(harness.outputs, started.id);
 
 		expect(result).toMatchObject({ status: "completed", exitCode: 0 });
-		expect(readFileSync(result.stdoutPath)).toEqual(Buffer.from(stdout));
-		expect(readFileSync(result.stderrPath)).toEqual(Buffer.from(stderr));
-		expect(chunks.map(({ chunk }) => chunk.text).join("")).toBe(stdout);
+		expect(readFileSync(result.logPath)).toEqual(Buffer.from(stdout + stderr));
+		expect(chunks.map(({ chunk }) => chunk.text).join("")).toBe(stdout + stderr);
 		expect(chunks.at(-1)!.run).toMatchObject({ status: "completed", exitCode: 0 });
 	});
 
@@ -163,7 +162,7 @@ describe("monitor runs", () => {
 		const result = await finish(harness, started.id, 10_000);
 		const chunks = outputsFor(harness.outputs, started.id);
 
-		expect(readFileSync(result.stdoutPath, "utf8")).toBe(first + second);
+		expect(readFileSync(result.logPath, "utf8")).toBe(first + second);
 		expect(chunks.some(({ chunk }) => chunk.suppressed === true)).toBe(false);
 		expect(chunks.map(({ chunk }) => chunk.text).join("")).toBe(first + second);
 	}, 15_000);
@@ -236,8 +235,7 @@ describe("monitor runs", () => {
 
 		expect(result).toMatchObject({ status: "completed", exitCode: 0 });
 		expect(existsSync(finished)).toBe(true);
-		expect(readFileSync(result.stdoutPath, "utf8")).toBe(`${noise}after-noise\n`);
-		expect(readFileSync(result.stderrPath, "utf8")).toBe("stderr-after\n");
+		expect(readFileSync(result.logPath, "utf8")).toBe(`${noise}stderr-after\nafter-noise\n`);
 		expect(chunks.map(({ chunk }) => chunk.text).join("")).not.toContain("RAW-NOISE");
 		expect(chunks.map(({ chunk }) => chunk.text).join("")).not.toContain("LINE-NOISE");
 	}, 15_000);
@@ -280,7 +278,7 @@ describe("monitor runs", () => {
 		});
 		const result = await finish(harness, started.id);
 
-		expect(readFileSync(result.stdoutPath, "utf8")).toBe("/sessions/parent.jsonl");
+		expect(readFileSync(result.logPath, "utf8")).toBe("/sessions/parent.jsonl");
 	});
 
 	it("passes stdin and closes the stream", async () => {
@@ -295,6 +293,6 @@ describe("monitor runs", () => {
 		const result = await finish(harness, started.id);
 
 		expect(result).toMatchObject({ status: "completed", exitCode: 0 });
-		expect(readFileSync(result.stdoutPath, "utf8")).toBe(input);
+		expect(readFileSync(result.logPath, "utf8")).toBe(input);
 	});
 });
