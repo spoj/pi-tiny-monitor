@@ -65,6 +65,7 @@ function registerTools(pi: ExtensionAPI, manager: MonitorManager): void {
 			const run = manager.run(
 				shell.commandTransport === "stdin" ? [shell.shell, ...shell.args] : [shell.shell, ...shell.args, command],
 				{
+					command: params.command,
 					cwd: ctx.cwd,
 					// Pi exports the session file only to its own bash tool; pi-sub needs it here too.
 					env: { ...process.env, PI_SESSION_FILE: ctx.sessionManager.getSessionFile() },
@@ -92,6 +93,7 @@ function registerTools(pi: ExtensionAPI, manager: MonitorManager): void {
 }
 
 export default function piTinyMonitor(pi: ExtensionAPI): void {
+	let manager: MonitorManager | undefined;
 	let shutdown: (() => Promise<void>) | undefined;
 	let pending: TextContent[] | undefined;
 
@@ -118,10 +120,11 @@ export default function piTinyMonitor(pi: ExtensionAPI): void {
 	});
 
 	pi.on("session_start", async (_event, ctx) => {
-		const manager = new MonitorManager({
-			onUpdate: () => renderWidget(ctx, manager),
+		const current = new MonitorManager({
+			onUpdate: () => renderWidget(ctx, current),
 			onOutput: (run, chunk) => notify(liveText(run, chunk)),
 		});
+		manager = current;
 
 		const pathKey = Object.keys(process.env).find((key) => key.toLowerCase() === "path") ?? "PATH";
 		const previousPath = process.env[pathKey];
@@ -129,19 +132,32 @@ export default function piTinyMonitor(pi: ExtensionAPI): void {
 
 		shutdown = async () => {
 			try {
-				await manager.shutdown();
+				await current.shutdown();
 			} finally {
 				if (previousPath === undefined) delete process.env[pathKey];
 				else process.env[pathKey] = previousPath;
 			}
 		};
-		registerTools(pi, manager);
-		renderWidget(ctx, manager);
+		registerTools(pi, current);
+		renderWidget(ctx, current);
+	});
+
+	// Compaction can summarize away the calls that started monitors, so restate the ones still running.
+	// Without triggerTurn, a steer joins the current run or is appended to an idle session without waking it.
+	pi.on("session_compact", () => {
+		const running = manager?.list().filter((run) => run.status === "running") ?? [];
+		if (!running.length) return;
+		const text = [
+			"Monitors still running after compaction:",
+			...running.map((run) => `[${run.id} · log: ${run.logPath}]\n${run.command}`),
+		].join("\n");
+		pi.sendMessage({ customType: "pi-tiny-monitor", content: [{ type: "text", text }], display: true }, { deliverAs: "steer" });
 	});
 
 	pi.on("session_shutdown", async (_event, ctx) => {
 		const close = shutdown;
 		shutdown = undefined;
+		manager = undefined;
 		pending = undefined;
 		await close?.();
 		ctx.ui.setWidget(WIDGET_KEY, undefined);

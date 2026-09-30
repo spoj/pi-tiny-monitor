@@ -16,26 +16,29 @@ import {
 	ModelRuntime,
 	SessionManager,
 	SettingsManager,
+	type ExtensionAPI,
 } from "@earendil-works/pi-coding-agent";
 
 const mocks = vi.hoisted(() => {
 	const runSnapshot = {
 		id: "run-1",
+		command: "printf hello",
 		logPath: "/tmp/pi-run-1.log",
 		status: "running",
 	};
+	const runs: Array<Record<string, unknown>> = [];
 	const run = vi.fn((_argv: string[], _options: unknown) => runSnapshot);
 	const stop = vi.fn(async (_id: string) => undefined);
 	const shutdown = vi.fn(async () => undefined);
 	const managers: Array<{ onOutput: (run: any, chunk: any) => void }> = [];
 	class FakeManager {
 		constructor(options: (typeof managers)[number]) { managers.push(options); }
-		list() { return []; }
+		list() { return runs; }
 		run = run;
 		stop = stop;
 		shutdown = shutdown;
 	}
-	return { FakeManager, runSnapshot, run, stop, shutdown, managers };
+	return { FakeManager, runSnapshot, runs, run, stop, shutdown, managers };
 });
 
 vi.mock("../src/manager.ts", () => ({ MonitorManager: mocks.FakeManager }));
@@ -68,7 +71,7 @@ async function setup() {
 	return { pi, ctx, event, tools, deliver };
 }
 
-async function setupAgent() {
+async function setupAgent(...extensionFactories: Array<(pi: ExtensionAPI) => void>) {
 	const { default: piTinyMonitor } = await import("../src/index.ts");
 	const cwd = mkdtempSync(join(tmpdir(), "pi-tiny-monitor-delivery-"));
 	const settingsManager = SettingsManager.inMemory({
@@ -79,7 +82,7 @@ async function setupAgent() {
 	const resourceLoader = new DefaultResourceLoader({
 		cwd, agentDir: cwd, settingsManager,
 		noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true,
-		extensionFactories: [piTinyMonitor],
+		extensionFactories: [piTinyMonitor, ...extensionFactories],
 	});
 	await resourceLoader.reload();
 	const model = getModel("anthropic", "claude-sonnet-4-5")!;
@@ -139,6 +142,7 @@ afterEach(async () => {
 	vi.clearAllMocks();
 	vi.resetModules();
 	mocks.managers.length = 0;
+	mocks.runs.length = 0;
 });
 
 describe("monitor extension", () => {
@@ -148,7 +152,7 @@ describe("monitor extension", () => {
 		expect(tools.monitor.parameters.required).toEqual(["command"]);
 		expect(tools.monitor_stop.parameters.required).toEqual(["id"]);
 		expect([tools.monitor.exposure, tools.monitor_stop.exposure]).toEqual(["model-only", "model-only"]);
-		expect(pi.on.mock.calls.map(([name]) => name)).toEqual(["message_start", "agent_settled", "session_start", "session_shutdown"]);
+		expect(pi.on.mock.calls.map(([name]) => name)).toEqual(["message_start", "agent_settled", "session_start", "session_compact", "session_shutdown"]);
 		expect(mocks.managers).toHaveLength(1);
 	});
 
@@ -161,6 +165,7 @@ describe("monitor extension", () => {
 		} as never);
 		expect(mocks.run).toHaveBeenCalledOnce();
 		expect(mocks.run.mock.calls[0][1]).toMatchObject({
+			command: "printf hello",
 			cwd: "/tmp/parent",
 			env: { PI_SESSION_FILE: "/tmp/sessions/parent.jsonl" },
 		});
@@ -262,6 +267,28 @@ describe("monitor extension", () => {
 		expect(second.deliver().content).not.toContain("first session");
 	});
 
+	it("restates running monitors after compaction", async () => {
+		const { pi, event, ctx, deliver } = await setup();
+		event("session_compact")({}, ctx);
+		expect(pi.sendMessage).not.toHaveBeenCalled();
+
+		mocks.runs.push(
+			mocks.runSnapshot,
+			{ ...mocks.runSnapshot, id: "run-2", command: "make test", status: "completed", exitCode: 0 },
+			{ ...mocks.runSnapshot, id: "run-3", command: "letmeknow --session happy-wren listen", logPath: "/tmp/pi-run-3.log" },
+		);
+		event("session_compact")({}, ctx);
+		expect(pi.sendMessage).toHaveBeenCalledOnce();
+		expect(pi.sendMessage.mock.calls[0][1]).toEqual({ deliverAs: "steer" });
+		expect(deliver().content).toBe([
+			"Monitors still running after compaction:",
+			"[run-1 · log: /tmp/pi-run-1.log]",
+			"printf hello",
+			"[run-3 · log: /tmp/pi-run-3.log]",
+			"letmeknow --session happy-wren listen",
+		].join("\n"));
+	});
+
 	it("includes the suppression reason once with the log", async () => {
 		const { deliver } = await setup();
 		mocks.managers[0].onOutput(mocks.runSnapshot, {
@@ -341,6 +368,40 @@ describe("batched delivery through AgentSession", () => {
 		expect(JSON.stringify(requests[1])).not.toContain("cancelled result");
 		finish(1);
 		await vi.waitFor(() => expect(session.isIdle).toBe(true));
+		expect(streams).toHaveLength(2);
+	});
+
+	it("appends running monitors after an idle compaction without waking the session", async () => {
+		const summarize = (pi: ExtensionAPI) => pi.on("session_before_compact", ({ preparation }) => ({
+			compaction: { summary: "summary", firstKeptEntryId: preparation.firstKeptEntryId, tokensBefore: preparation.tokensBefore },
+		}));
+		const { session, streams, start, finish, settingsManager } = await setupAgent(summarize);
+		settingsManager.applyOverrides({ compaction: { keepRecentTokens: 0 } });
+		const active = start();
+		await vi.waitFor(() => expect(streams).toHaveLength(1));
+		finish(0);
+		await active;
+
+		mocks.runs.push({ ...mocks.runSnapshot, command: "letmeknow --session happy-wren listen" });
+		await session.compact();
+		const entries = session.sessionManager.getBranch();
+		expect(entries.at(-2)?.type).toBe("compaction");
+		expect(JSON.stringify(entries.at(-1))).toContain("letmeknow --session happy-wren listen");
+		expect(session.isIdle).toBe(true);
+		expect(streams).toHaveLength(1);
+	});
+
+	it("steers running monitors into the current run after a compaction", async () => {
+		const { session, requests, streams, start, finish } = await setupAgent();
+		mocks.runs.push({ ...mocks.runSnapshot, command: "letmeknow --session happy-wren listen" });
+		const active = start();
+		await vi.waitFor(() => expect(streams).toHaveLength(1));
+		await session.extensionRunner.emit({ type: "session_compact" } as never);
+		finish(0);
+		await vi.waitFor(() => expect(streams).toHaveLength(2));
+		expect(JSON.stringify(requests[1])).toContain("letmeknow --session happy-wren listen");
+		finish(1);
+		await active;
 		expect(streams).toHaveLength(2);
 	});
 

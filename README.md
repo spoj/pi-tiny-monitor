@@ -24,6 +24,8 @@ All ready updates share one pending steering message. Arrivals join that message
 
 At most eight monitors may be active in one session. Session shutdown, reload, and replacement stop owned runs silently. Logs stay in the temp directory.
 
+Compaction can summarize away the calls that started monitors, so after each compaction one message lists the monitors still running with their IDs, logs, and commands. During a run it arrives as steering; an idle session gets it appended without waking.
+
 ## Child Pi sessions
 
 The extension puts `bin/` on the session's `PATH`, which provides `pi-sub`. It accepts any `pi` arguments and records the calling session as the child's `parentSession`, so Pi shows the child under its parent:

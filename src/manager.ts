@@ -10,6 +10,7 @@ export type RunStatus = "running" | "completed" | "failed" | "stopped";
 
 export type RunSnapshot = {
 	id: string;
+	command: string;
 	logPath: string;
 	status: RunStatus;
 	exitCode?: number;
@@ -40,7 +41,7 @@ export class MonitorManager {
 		return Array.from(this.runs.values(), (run) => this.snapshot(run));
 	}
 
-	run(argv: string[], options: { cwd: string; env: NodeJS.ProcessEnv; stdin?: string }): RunSnapshot {
+	run(argv: string[], options: { command: string; cwd: string; env: NodeJS.ProcessEnv; stdin?: string }): RunSnapshot {
 		if (this.shuttingDown) throw new Error("Monitor manager is shutting down");
 		if (this.list().filter((run) => run.status === "running").length >= 8) {
 			throw new Error("Maximum of 8 monitors already running");
@@ -82,7 +83,7 @@ export class MonitorManager {
 			run.output.append(buffer.subarray(0, length));
 		};
 		const run: RunRecord = {
-			id, logPath, status: "running", process: child,
+			id, command: options.command, logPath, status: "running", process: child,
 			outputFile: file, readOutput, outputTimer: setInterval(readOutput, 100),
 			output: new LiveOutput((chunk) => {
 				if (chunk.suppressed) {
@@ -142,7 +143,7 @@ export class MonitorManager {
 	}
 
 	private snapshot(run: RunRecord): RunSnapshot {
-		const { id, logPath, status, exitCode, signal } = run;
-		return { id, logPath, status, exitCode, signal };
+		const { id, command, logPath, status, exitCode, signal } = run;
+		return { id, command, logPath, status, exitCode, signal };
 	}
 }
