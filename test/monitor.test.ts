@@ -37,11 +37,11 @@ function createHarness(): Harness {
 
 let scripts = 0;
 
-function start(harness: Harness, source: string, stdin?: string, env: NodeJS.ProcessEnv = process.env): RunSnapshot {
+function start(harness: Harness, source: string, stdin?: string): RunSnapshot {
 	// A script file keeps large sources off the command line, which Windows caps at 32,767 characters.
 	const script = join(harness.directory, `script-${scripts++}.cjs`);
 	writeFileSync(script, source);
-	return harness.manager.run([process.execPath, script], { command: script, cwd: harness.directory, env, ...(stdin === undefined ? {} : { stdin }) });
+	return harness.manager.run([process.execPath, script], { command: script, cwd: harness.directory, ...(stdin === undefined ? {} : { stdin }) });
 }
 
 function status(manager: MonitorManager, id: string): RunSnapshot {
@@ -252,7 +252,7 @@ describe("monitor runs", () => {
 
 	it("rejects a command that cannot start", async () => {
 		const harness = createHarness();
-		expect(() => harness.manager.run([join(harness.directory, "missing-shell")], { command: "missing-shell", cwd: harness.directory, env: process.env }))
+		expect(() => harness.manager.run([join(harness.directory, "missing-shell")], { command: "missing-shell", cwd: harness.directory }))
 			.toThrow("Could not start");
 		await new Promise((resolve) => setTimeout(resolve, 50));
 		expect(harness.manager.list()).toEqual([]);
@@ -278,17 +278,6 @@ describe("monitor runs", () => {
 		await harness.manager.shutdown();
 		await expectNoFile(leaked);
 	}, 10_000);
-
-	it("runs the command with the given environment", async () => {
-		const harness = createHarness();
-		const started = await start(harness, "process.stdout.write(process.env.PI_SESSION_FILE);", undefined, {
-			...process.env,
-			PI_SESSION_FILE: "/sessions/parent.jsonl",
-		});
-		const result = await finish(harness, started.id);
-
-		expect(readFileSync(result.logPath, "utf8")).toBe("/sessions/parent.jsonl");
-	});
 
 	it("passes stdin and closes the stream", async () => {
 		const harness = createHarness();

@@ -1,5 +1,3 @@
-import { delimiter } from "node:path";
-import { fileURLToPath } from "node:url";
 import type { TextContent } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import {
@@ -52,7 +50,6 @@ function registerTools(pi: ExtensionAPI, manager: MonitorManager): void {
 		promptGuidelines: [
 			"Use monitor for long-running or noisy shell commands when the current turn should remain available.",
 			"Monitor output arrives in timed chunks; chunk boundaries are not newline boundaries. Use the continuation and incomplete-line headers, and read the saved log for complete output.",
-			"To delegate to a child Pi agent, monitor `pi-sub -p \"TASK\"`; it accepts pi flags and records this session as the child's parent.",
 		],
 		parameters: monitorTool,
 		// Updates arrive as later messages, not in the result, so codemode scripts cannot use monitors.
@@ -67,8 +64,6 @@ function registerTools(pi: ExtensionAPI, manager: MonitorManager): void {
 				{
 					command: params.command,
 					cwd: ctx.cwd,
-					// Pi exports the session file only to its own bash tool; pi-sub needs it here too.
-					env: { ...process.env, PI_SESSION_FILE: ctx.sessionManager.getSessionFile() },
 					...(shell.commandTransport === "stdin" ? { stdin: command } : {}),
 				},
 			);
@@ -125,19 +120,7 @@ export default function piTinyMonitor(pi: ExtensionAPI): void {
 			onOutput: (run, chunk) => notify(liveText(run, chunk)),
 		});
 		manager = current;
-
-		const pathKey = Object.keys(process.env).find((key) => key.toLowerCase() === "path") ?? "PATH";
-		const previousPath = process.env[pathKey];
-		process.env[pathKey] = `${fileURLToPath(new URL("../bin", import.meta.url))}${delimiter}${previousPath ?? ""}`;
-
-		shutdown = async () => {
-			try {
-				await current.shutdown();
-			} finally {
-				if (previousPath === undefined) delete process.env[pathKey];
-				else process.env[pathKey] = previousPath;
-			}
-		};
+		shutdown = () => current.shutdown();
 		registerTools(pi, current);
 		renderWidget(ctx, current);
 	});

@@ -41,7 +41,7 @@ export class MonitorManager {
 		return Array.from(this.runs.values(), (run) => this.snapshot(run));
 	}
 
-	run(argv: string[], options: { command: string; cwd: string; env: NodeJS.ProcessEnv; stdin?: string }): RunSnapshot {
+	run(argv: string[], options: { command: string; cwd: string; stdin?: string }): RunSnapshot {
 		if (this.shuttingDown) throw new Error("Monitor manager is shutting down");
 		if (this.list().filter((run) => run.status === "running").length >= 8) {
 			throw new Error("Maximum of 8 monitors already running");
@@ -53,7 +53,6 @@ export class MonitorManager {
 		try {
 			child = spawn(argv[0], argv.slice(1), {
 				cwd: options.cwd,
-				env: options.env,
 				stdio: [options.stdin === undefined ? "ignore" : "pipe", log, log],
 				detached: process.platform !== "win32",
 				windowsHide: true,

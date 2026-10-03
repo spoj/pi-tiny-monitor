@@ -1,6 +1,6 @@
 # pi-tiny-monitor
 
-A Pi package for session-owned background commands and parent-linked child Pi sessions.
+A Pi package for session-owned background commands.
 
 ## Monitor tools
 
@@ -25,16 +25,6 @@ All ready updates share one pending steering message. Arrivals join that message
 At most eight monitors may be active in one session. Session shutdown, reload, and replacement stop owned runs silently. Logs stay in the temp directory.
 
 Compaction can summarize away the calls that started monitors, so after each compaction one message lists the monitors still running with their IDs, logs, and commands. During a run it arrives as steering; an idle session gets it appended without waking.
-
-## Child Pi sessions
-
-The extension puts `bin/` on the session's `PATH`, which provides `pi-sub`. It accepts any `pi` arguments and records the calling session as the child's `parentSession`, so Pi shows the child under its parent:
-
-```bash
-pi-sub -p "Review src/ for correctness bugs. Report findings with file paths."
-```
-
-Run it through `monitor` to keep the parent turn available; the child's final answer arrives as monitor output. `pi-sub` writes the child's session header beside the parent session (`monitor` and Pi's bash tool export the parent as `PI_SESSION_FILE`), then runs `pi --session FILE`. Outside a Pi session it runs plain `pi`. It is a POSIX shell script and needs `uuidgen`.
 
 ## Install
 

@@ -1,6 +1,6 @@
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { delimiter, join } from "node:path";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	createAssistantMessageEventStream,
@@ -138,7 +138,6 @@ async function setupAgent(...extensionFactories: Array<(pi: ExtensionAPI) => voi
 
 afterEach(async () => {
 	for (const close of cleanups.splice(0)) await close();
-	vi.unstubAllEnvs();
 	vi.clearAllMocks();
 	vi.resetModules();
 	mocks.managers.length = 0;
@@ -156,19 +155,14 @@ describe("monitor extension", () => {
 		expect(mocks.managers).toHaveLength(1);
 	});
 
-	it("starts monitors in the session cwd with the session file for pi-sub", async () => {
+	it("starts monitors in the session cwd", async () => {
 		const { tools } = await setup();
 		const result = await tools.monitor.execute("call-1", { command: "printf hello" }, undefined, undefined, {
 			cwd: "/tmp/parent",
 			isProjectTrusted: () => true,
-			sessionManager: { getSessionFile: () => "/tmp/sessions/parent.jsonl" },
 		} as never);
 		expect(mocks.run).toHaveBeenCalledOnce();
-		expect(mocks.run.mock.calls[0][1]).toMatchObject({
-			command: "printf hello",
-			cwd: "/tmp/parent",
-			env: { PI_SESSION_FILE: "/tmp/sessions/parent.jsonl" },
-		});
+		expect(mocks.run.mock.calls[0][1]).toMatchObject({ command: "printf hello", cwd: "/tmp/parent" });
 		expect(result.content[0].text).toContain("Monitor started");
 	});
 
@@ -179,24 +173,16 @@ describe("monitor extension", () => {
 		expect(result.content[0].text).toContain("Monitor stopped");
 	});
 
-	it("documents timed chunk boundaries and pi-sub delegation", async () => {
+	it("documents timed chunk boundaries", async () => {
 		const { tools } = await setup();
-		const guidelines = tools.monitor.promptGuidelines.join(" ");
-		expect(guidelines).toContain("not newline boundaries");
-		expect(guidelines).toContain("pi-sub");
+		expect(tools.monitor.promptGuidelines.join(" ")).toContain("not newline boundaries");
 	});
 
-	it("puts pi-sub on PATH for the session and restores PATH once", async () => {
-		const pathKey = Object.keys(process.env).find((key) => key.toLowerCase() === "path") ?? "PATH";
-		vi.stubEnv(pathKey, "/original");
+	it("shuts down the manager once", async () => {
 		const { event, ctx } = await setup();
-		const [bin, rest] = process.env[pathKey]!.split(delimiter);
-		expect(existsSync(join(bin, "pi-sub"))).toBe(true);
-		expect(rest).toBe("/original");
 		await event("session_shutdown")({}, ctx);
 		await event("session_shutdown")({}, ctx);
 		expect(mocks.shutdown).toHaveBeenCalledOnce();
-		expect(process.env[pathKey]).toBe("/original");
 	});
 
 	it("delivers live flags and final log paths", async () => {

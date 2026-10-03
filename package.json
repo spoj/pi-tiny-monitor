@@ -1,14 +1,11 @@
 {
   "name": "pi-tiny-monitor",
   "version": "0.1.0",
-  "description": "Background monitored commands and parent-linked child Pi sessions",
+  "description": "Background monitored commands for Pi",
   "type": "module",
   "keywords": ["pi-package"],
   "license": "MIT",
-  "files": ["README.md", "src", "bin"],
-  "bin": {
-    "pi-sub": "./bin/pi-sub"
-  },
+  "files": ["README.md", "src"],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/spoj/pi-tiny-monitor.git"
