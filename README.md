@@ -20,7 +20,7 @@ Output is noisy-output safe:
 
 Exceeding either limit suppresses further updates, not the command. Full output remains in the log, and completion is still reported.
 
-All ready updates share one pending steering message. Arrivals join that message until Pi begins delivering it; later arrivals start the next batch. An idle session wakes once for the pending batch. Human steering keeps its configured delivery mode. Escape discards queued delivery as usual; future updates can wake the session again after it settles.
+All ready updates share one pending steering message. Arrivals join that message until Pi begins delivering it; later arrivals start the next batch. An idle session wakes once for the pending batch. Human steering keeps its configured delivery mode: with `all`, the batch arrives together with queued human steering; with `one-at-a-time`, it takes its turn in the queue. Escape discards queued delivery as usual; future updates can wake the session again after it settles.
 
 At most eight monitors may be active in one session. Session shutdown, reload, and replacement stop owned runs silently. Logs stay in the temp directory.
 

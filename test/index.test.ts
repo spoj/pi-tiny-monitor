@@ -325,6 +325,28 @@ describe("batched delivery through AgentSession", () => {
 		expect(streams).toHaveLength(4);
 	});
 
+	it("delivers ready updates with all queued human steering in all mode", async () => {
+		const { session, requests, streams, start, finish } = await setupAgent();
+		session.setSteeringMode("all");
+		const active = start();
+		await vi.waitFor(() => expect(streams).toHaveLength(1));
+		await session.steer("human one");
+		output("chunk");
+		await session.steer("human two");
+		finish(0);
+		await vi.waitFor(() => expect(streams).toHaveLength(2));
+		for (const text of ["human one", "chunk", "human two"]) expect(JSON.stringify(requests[1])).toContain(text);
+
+		output("review ready");
+		finish(1);
+		await vi.waitFor(() => expect(streams).toHaveLength(3));
+		expect(JSON.stringify(requests[2])).toContain("review ready");
+		finish(2);
+		await active;
+		expect(streams).toHaveLength(3);
+		expect(session.sessionManager.getEntries().filter((entry) => entry.type === "custom_message" && entry.customType === "pi-tiny-monitor")).toHaveLength(2);
+	});
+
 	it("wakes an idle session once for arrivals before delivery", async () => {
 		const { session, requests, streams, finish } = await setupAgent();
 		output("output");
