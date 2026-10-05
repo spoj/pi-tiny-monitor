@@ -21,7 +21,7 @@ const monitorStopTool = Type.Object({
 
 function renderStatus(ctx: ExtensionContext, manager: MonitorManager): void {
 	const active = manager.list().filter((run) => run.status === "running").length;
-	ctx.ui.setStatus(STATUS_KEY, active ? `${active} monitors` : undefined);
+	ctx.ui.setStatus(STATUS_KEY, active ? `monitors: ${active}` : undefined);
 }
 
 function liveText(run: RunSnapshot, chunk: LiveChunk & { streamEnded?: boolean }): string {
