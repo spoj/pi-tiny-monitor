@@ -56,7 +56,7 @@ async function setup() {
 		cwd: "/tmp/parent",
 		isProjectTrusted: () => true,
 		isIdle: vi.fn(() => true),
-		ui: { setWidget: vi.fn() },
+		ui: { setStatus: vi.fn() },
 	};
 	piTinyMonitor(pi as never);
 	const event = (name: string) => pi.on.mock.calls.find(([type]) => type === name)?.[1];

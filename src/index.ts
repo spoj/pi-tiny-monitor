@@ -9,7 +9,7 @@ import {
 import { MonitorManager, type RunSnapshot } from "./manager.ts";
 import type { LiveChunk } from "./live-output.ts";
 
-const WIDGET_KEY = "pi-tiny-monitor";
+const STATUS_KEY = "pi-tiny-monitor";
 
 const monitorTool = Type.Object({
 	command: Type.String({ minLength: 1, description: "Shell command to run in the background" }),
@@ -19,9 +19,9 @@ const monitorStopTool = Type.Object({
 	id: Type.String({ minLength: 1, description: "Running monitor ID" }),
 });
 
-function renderWidget(ctx: ExtensionContext, manager: MonitorManager): void {
+function renderStatus(ctx: ExtensionContext, manager: MonitorManager): void {
 	const active = manager.list().filter((run) => run.status === "running").length;
-	ctx.ui.setWidget(WIDGET_KEY, active ? [`${active} monitors active`] : undefined);
+	ctx.ui.setStatus(STATUS_KEY, active ? `${active} monitors` : undefined);
 }
 
 function liveText(run: RunSnapshot, chunk: LiveChunk & { streamEnded?: boolean }): string {
@@ -116,13 +116,13 @@ export default function piTinyMonitor(pi: ExtensionAPI): void {
 
 	pi.on("session_start", async (_event, ctx) => {
 		const current = new MonitorManager({
-			onUpdate: () => renderWidget(ctx, current),
+			onUpdate: () => renderStatus(ctx, current),
 			onOutput: (run, chunk) => notify(liveText(run, chunk)),
 		});
 		manager = current;
 		shutdown = () => current.shutdown();
 		registerTools(pi, current);
-		renderWidget(ctx, current);
+		renderStatus(ctx, current);
 	});
 
 	// Compaction can summarize away the calls that started monitors, so restate the ones still running.
@@ -143,6 +143,6 @@ export default function piTinyMonitor(pi: ExtensionAPI): void {
 		manager = undefined;
 		pending = undefined;
 		await close?.();
-		ctx.ui.setWidget(WIDGET_KEY, undefined);
+		ctx.ui.setStatus(STATUS_KEY, undefined);
 	});
 }
