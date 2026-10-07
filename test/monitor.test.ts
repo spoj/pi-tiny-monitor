@@ -98,6 +98,16 @@ describe("monitor runs", () => {
 		expect(chunks.at(-1)!.run).toMatchObject({ status: "completed", exitCode: 0 });
 	});
 
+	it.skipIf(process.platform === "win32")("keeps reading a log truncated under it", async () => {
+		const harness = createHarness();
+		const started = start(harness, "process.stdout.write('before\\n'); setTimeout(() => process.stdout.write('after\\n'), 1000);");
+		await waitFor(() => readFileSync(started.logPath, "utf8") === "before\n");
+		await new Promise((resolve) => setTimeout(resolve, 300));
+		writeFileSync(started.logPath, "");
+		await finish(harness, started.id);
+		expect(outputsFor(harness.outputs, started.id).map(({ chunk }) => chunk.text).join("")).toContain("after");
+	});
+
 	it("wakes a silent natural exit with a final status chunk", async () => {
 		const harness = createHarness();
 		const started = await start(harness, "process.exit(0);");

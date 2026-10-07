@@ -74,7 +74,9 @@ export class MonitorManager {
 		const file = openSync(logPath, "r");
 		let offset = 0;
 		const readOutput = () => {
-			const size = fstatSync(file).size - offset;
+			const end = fstatSync(file).size;
+			if (end < offset) offset = 0;
+			const size = end - offset;
 			if (size === 0) return;
 			const buffer = Buffer.alloc(Math.min(size, 50 * 1024 + 1));
 			const length = readSync(file, buffer, 0, buffer.length, offset);
