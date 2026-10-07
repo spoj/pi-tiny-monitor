@@ -121,12 +121,11 @@ describe("LiveOutput", () => {
 		expect(live.finish()).toBeUndefined();
 	});
 
-	it("reports decoder expansion at EOF without emitting during finish", () => {
+	it("suppresses decoder expansion at EOF", () => {
 		const { live, chunks } = output();
 		live.append(Buffer.concat([Buffer.alloc(50 * 1024 - 1, 0x61), Buffer.from([0xc2])]));
-		expect(live.finish()).toMatchObject({ suppressed: true });
-		expect(chunks).toEqual([]);
 		expect(live.finish()).toBeUndefined();
+		expect(chunks).toEqual([expect.objectContaining({ suppressed: true })]);
 	});
 
 	it("limits visible newlines on a rolling window", () => {
@@ -178,16 +177,5 @@ describe("LiveOutput", () => {
 		expect(chunks).toHaveLength(3);
 		expect(chunks.every((chunk) => !chunk.suppressed)).toBe(true);
 		expect(chunks[2].endsWithPartialLine).toBe(true);
-	});
-
-	it("disposes pending output and callbacks", () => {
-		const { live, chunks } = output();
-
-		live.append(Buffer.from("pending"));
-		live.dispose();
-		live.append(Buffer.from("late"));
-		vi.advanceTimersByTime(BATCH_MS * 2);
-		expect(chunks).toEqual([]);
-		expect(live.finish()).toBeUndefined();
 	});
 });

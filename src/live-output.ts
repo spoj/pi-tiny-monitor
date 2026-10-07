@@ -32,10 +32,7 @@ export class LiveOutput {
 
 	append(chunk: Buffer): void {
 		if (this.closed || chunk.length === 0) return;
-		if (this.rawBatchBytes + chunk.length > RAW_BATCH_LIMIT) {
-			this.suppress("output limit exceeded");
-			return;
-		}
+		if (this.rawBatchBytes + chunk.length > RAW_BATCH_LIMIT) return this.suppress();
 
 		this.rawBatchBytes += chunk.length;
 		if (this.timer === undefined) this.timer = setTimeout(() => this.flush(), BATCH_MS);
@@ -45,35 +42,19 @@ export class LiveOutput {
 
 	finish(): LiveChunk | undefined {
 		if (this.closed) return undefined;
-		this.closed = true;
-		if (this.timer !== undefined) {
-			clearTimeout(this.timer);
-			this.timer = undefined;
-		}
-
 		const visible = this.sanitize(this.decoder.end());
-		if (Buffer.byteLength(this.pending + visible, "utf8") > RAW_BATCH_LIMIT) {
-			this.dispose();
-			return { text: "output limit exceeded", startsWithContinuation: false, endsWithPartialLine: false, suppressed: true };
-		}
 		if (visible) this.accept(visible);
-		this.sanitizerState = "text";
-
-		const result: LiveChunk = {
+		if (this.closed) return undefined;
+		this.close();
+		return {
 			text: this.pending,
 			startsWithContinuation: this.pending ? this.pendingStartsWithContinuation : this.streamEndsWithPartialLine,
 			endsWithPartialLine: this.streamEndsWithPartialLine,
 		};
-		this.pending = "";
-		this.pendingStartsWithContinuation = false;
-		return result;
 	}
 
-	dispose(): void {
-		if (this.timer !== undefined) clearTimeout(this.timer);
-		this.timer = undefined;
-		this.pending = "";
-		this.pendingStartsWithContinuation = false;
+	private close(): void {
+		clearTimeout(this.timer);
 		this.closed = true;
 	}
 
@@ -93,19 +74,13 @@ export class LiveOutput {
 	}
 
 	private accept(text: string): void {
-		if (Buffer.byteLength(this.pending, "utf8") + Buffer.byteLength(text, "utf8") > RAW_BATCH_LIMIT) {
-			this.suppress("output limit exceeded");
-			return;
-		}
+		if (Buffer.byteLength(this.pending, "utf8") + Buffer.byteLength(text, "utf8") > RAW_BATCH_LIMIT) return this.suppress();
 		const now = Date.now();
 		this.newlineTimes = this.newlineTimes.filter((time) => now - time < NEWLINE_WINDOW_MS);
 		let newlines = 0;
 		for (const character of text) {
 			if (character !== "\n") continue;
-			if (this.newlineTimes.length + newlines >= NEWLINE_LIMIT) {
-				this.suppress("output limit exceeded");
-				return;
-			}
+			if (this.newlineTimes.length + newlines >= NEWLINE_LIMIT) return this.suppress();
 			newlines++;
 		}
 
@@ -116,14 +91,9 @@ export class LiveOutput {
 		this.pending += text;
 	}
 
-	private suppress(reason: string): void {
-		if (this.closed) return;
-		this.closed = true;
-		if (this.timer !== undefined) clearTimeout(this.timer);
-		this.timer = undefined;
-		this.pending = "";
-		this.pendingStartsWithContinuation = false;
-		this.emit({ text: reason, startsWithContinuation: false, endsWithPartialLine: false, suppressed: true });
+	private suppress(): void {
+		this.close();
+		this.emit({ text: "output limit exceeded", startsWithContinuation: false, endsWithPartialLine: false, suppressed: true });
 	}
 
 	private sanitize(text: string): string {

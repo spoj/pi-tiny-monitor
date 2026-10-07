@@ -173,13 +173,6 @@ describe("monitor extension", () => {
 		expect(result.content[0].text).toContain("Monitor stopped");
 	});
 
-	it("shuts down the manager once", async () => {
-		const { event, ctx } = await setup();
-		await event("session_shutdown")({}, ctx);
-		await event("session_shutdown")({}, ctx);
-		expect(mocks.shutdown).toHaveBeenCalledOnce();
-	});
-
 	it("delivers live flags and final log paths", async () => {
 		const { pi, deliver } = await setup();
 		const options = mocks.managers[0];

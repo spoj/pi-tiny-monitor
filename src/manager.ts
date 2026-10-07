@@ -42,7 +42,6 @@ export class MonitorManager {
 	}
 
 	run(argv: string[], options: { command: string; cwd: string; stdin?: string }): RunSnapshot {
-		if (this.shuttingDown) throw new Error("Monitor manager is shutting down");
 		if (this.list().filter((run) => run.status === "running").length >= 8) {
 			throw new Error("Maximum of 8 monitors already running");
 		}
@@ -119,18 +118,11 @@ export class MonitorManager {
 		if (run.finishing) return run.finishing;
 		clearInterval(run.outputTimer);
 		run.finishing = Promise.resolve().then(async () => {
-			let chunk: LiveChunk | undefined;
-			try {
-				await stopProcessTree(run.process);
-				run.readOutput?.();
-				chunk = run.output.finish();
-				run.status = status;
-			} catch {
-				run.status = "failed";
-			} finally {
-				run.output.dispose();
-				closeSync(run.outputFile);
-			}
+			await stopProcessTree(run.process);
+			run.readOutput?.();
+			const chunk = run.output.finish();
+			run.status = status;
+			closeSync(run.outputFile);
 			if (!this.shuttingDown && (run.status !== "stopped" || chunk?.text)) {
 				this.options.onOutput(this.snapshot(run), {
 					text: "", startsWithContinuation: false, endsWithPartialLine: false, ...chunk, streamEnded: run.status !== "stopped",

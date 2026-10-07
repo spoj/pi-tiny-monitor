@@ -29,9 +29,7 @@ function liveText(run: RunSnapshot, chunk: LiveChunk & { streamEnded?: boolean }
 		chunk.startsWithContinuation ? "continues previous line" : undefined,
 		chunk.endsWithPartialLine ? "last line incomplete" : undefined,
 	].filter((flag): flag is string => flag !== undefined);
-	if (chunk.suppressed) {
-		flags.push(`suppressed: ${chunk.text}`, `log: ${run.logPath}`);
-	}
+	if (chunk.suppressed) flags.push(`suppressed: ${chunk.text}`, `log: ${run.logPath}`);
 	if (chunk.streamEnded) {
 		flags.push(`status: ${run.status}`);
 		if (run.exitCode !== undefined) flags.push(`exit code: ${run.exitCode}`);
@@ -88,7 +86,6 @@ function registerTools(pi: ExtensionAPI, manager: MonitorManager): void {
 
 export default function piTinyMonitor(pi: ExtensionAPI): void {
 	let manager: MonitorManager | undefined;
-	let shutdown: (() => Promise<void>) | undefined;
 	let pending: TextContent[] | undefined;
 
 	function notify(text: string): void {
@@ -119,9 +116,7 @@ export default function piTinyMonitor(pi: ExtensionAPI): void {
 			onOutput: (run, chunk) => notify(liveText(run, chunk)),
 		});
 		manager = current;
-		shutdown = () => current.shutdown();
 		registerTools(pi, current);
-		renderStatus(ctx, current);
 	});
 
 	// Compaction can summarize away the calls that started monitors, so restate the ones still running.
@@ -136,12 +131,5 @@ export default function piTinyMonitor(pi: ExtensionAPI): void {
 		pi.sendMessage({ customType: "pi-tiny-monitor", content: [{ type: "text", text }], display: true }, { deliverAs: "steer" });
 	});
 
-	pi.on("session_shutdown", async (_event, ctx) => {
-		const close = shutdown;
-		shutdown = undefined;
-		manager = undefined;
-		pending = undefined;
-		await close?.();
-		ctx.ui.setStatus(STATUS_KEY, undefined);
-	});
+	pi.on("session_shutdown", () => manager?.shutdown());
 }
