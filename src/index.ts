@@ -49,7 +49,6 @@ function registerTools(pi: ExtensionAPI, manager: MonitorManager): void {
 		promptSnippet: "Run a background shell command with live output updates",
 		promptGuidelines: [
 			"Use monitor for long-running or noisy shell commands when the current turn should remain available.",
-			"Monitor output arrives in timed chunks; chunk boundaries are not newline boundaries. Use the continuation and incomplete-line headers, and read the saved log for complete output.",
 		],
 		parameters: monitorTool,
 		// Updates arrive as later messages, not in the result, so codemode scripts cannot use monitors.
@@ -82,7 +81,7 @@ function registerTools(pi: ExtensionAPI, manager: MonitorManager): void {
 		exposure: "model-only",
 		async execute(_toolCallId, params) {
 			await manager.stop(params.id);
-			return { content: [{ type: "text", text: `Monitor stopped.\n\nID: ${params.id}` }], details: undefined };
+			return { content: [{ type: "text", text: "Monitor stopped." }], details: undefined };
 		},
 	});
 }

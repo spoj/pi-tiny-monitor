@@ -33,7 +33,7 @@ export class LiveOutput {
 	append(chunk: Buffer): void {
 		if (this.closed || chunk.length === 0) return;
 		if (this.rawBatchBytes + chunk.length > RAW_BATCH_LIMIT) {
-			this.suppress("Live output suppressed: output limit exceeded.");
+			this.suppress("output limit exceeded");
 			return;
 		}
 
@@ -54,7 +54,7 @@ export class LiveOutput {
 		const visible = this.sanitize(this.decoder.end());
 		if (Buffer.byteLength(this.pending + visible, "utf8") > RAW_BATCH_LIMIT) {
 			this.dispose();
-			return { text: "Live output suppressed: output limit exceeded.", startsWithContinuation: false, endsWithPartialLine: false, suppressed: true };
+			return { text: "output limit exceeded", startsWithContinuation: false, endsWithPartialLine: false, suppressed: true };
 		}
 		if (visible) this.accept(visible);
 		this.sanitizerState = "text";
@@ -94,7 +94,7 @@ export class LiveOutput {
 
 	private accept(text: string): void {
 		if (Buffer.byteLength(this.pending, "utf8") + Buffer.byteLength(text, "utf8") > RAW_BATCH_LIMIT) {
-			this.suppress("Live output suppressed: output limit exceeded.");
+			this.suppress("output limit exceeded");
 			return;
 		}
 		const now = Date.now();
@@ -103,7 +103,7 @@ export class LiveOutput {
 		for (const character of text) {
 			if (character !== "\n") continue;
 			if (this.newlineTimes.length + newlines >= NEWLINE_LIMIT) {
-				this.suppress("Live output suppressed: output limit exceeded.");
+				this.suppress("output limit exceeded");
 				return;
 			}
 			newlines++;

@@ -106,7 +106,7 @@ describe("LiveOutput", () => {
 		live.append(Buffer.alloc(50 * 1024, 0x61));
 		live.append(Buffer.from("b"));
 		expect(chunks).toHaveLength(1);
-		expect(chunks[0]).toMatchObject({ suppressed: true, text: expect.stringContaining("suppressed") });
+		expect(chunks[0]).toMatchObject({ suppressed: true, text: "output limit exceeded" });
 		live.append(Buffer.from("later"));
 		vi.advanceTimersByTime(BATCH_MS * 2);
 		expect(chunks).toHaveLength(1);

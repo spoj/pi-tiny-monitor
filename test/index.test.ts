@@ -173,11 +173,6 @@ describe("monitor extension", () => {
 		expect(result.content[0].text).toContain("Monitor stopped");
 	});
 
-	it("documents timed chunk boundaries", async () => {
-		const { tools } = await setup();
-		expect(tools.monitor.promptGuidelines.join(" ")).toContain("not newline boundaries");
-	});
-
 	it("shuts down the manager once", async () => {
 		const { event, ctx } = await setup();
 		await event("session_shutdown")({}, ctx);
