@@ -15,8 +15,7 @@
   },
   "scripts": {
     "test": "vitest run",
-    "typecheck": "tsc --noEmit",
-    "check": "npm run typecheck && npm test"
+    "check": "tsc --noEmit && npm test"
   },
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",
@@ -24,8 +23,8 @@
     "typebox": "*"
   },
   "devDependencies": {
-    "@earendil-works/pi-ai": "^0.99.1",
-    "@earendil-works/pi-coding-agent": "^0.99.1",
+    "@earendil-works/pi-ai": "^1.0.4",
+    "@earendil-works/pi-coding-agent": "^1.0.4",
     "@types/node": "^22.19.19",
     "typescript": "^5.9.3",
     "typebox": "^1.3.7",
