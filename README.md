@@ -7,6 +7,8 @@ A Pi package for session-owned background commands.
 - `monitor({ command })` runs the command in the current Pi cwd with Pi's configured shell, trusted project settings, and shell command prefix. It returns immediately with a run ID and log path.
 - `monitor_stop({ id })` stops a run and its process tree. Pending output is flushed, but an explicit stop does not send an exit wake-up.
 
+`/monitors` lists running monitors with their age and command, and `/monitors stop` picks one to stop.
+
 Only the model can call these tools; Pi's codemode scripts cannot, because updates arrive as later messages rather than in the tool result.
 
 Each run writes stdout and stderr to one log, `pi-run-<id>.log` in the OS temp directory (beside Pi's own `pi-bash-<id>.log` files), without a size cap. The process writes to the log's file descriptor directly and the manager reads the log about every 100 ms; there is no pipe, tee, or drain process.

@@ -132,4 +132,19 @@ export default function piTinyMonitor(pi: ExtensionAPI): void {
 	});
 
 	pi.on("session_shutdown", () => manager?.shutdown());
+
+	pi.registerCommand("monitors", {
+		description: "List running monitors; /monitors stop picks one to stop",
+		handler: async (args, ctx) => {
+			const now = Date.now();
+			const runs = manager!.list().filter((run) => run.status === "running").map((run) => {
+				const age = now - run.startedAt;
+				return `${run.id} · ${age < 60_000 ? `${Math.round(age / 1000)}s` : `${Math.round(age / 60_000)}m`} · ${run.command.split("\n")[0].slice(0, 80)}`;
+			});
+			if (!runs.length) return ctx.ui.notify("No monitors running", "info");
+			if (args.trim() !== "stop") return ctx.ui.notify(runs.join("\n"), "info");
+			const choice = await ctx.ui.select("Stop monitor", runs);
+			if (choice) await manager!.stop(choice.slice(0, choice.indexOf(" ")));
+		},
+	});
 }

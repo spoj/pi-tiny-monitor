@@ -13,6 +13,7 @@ export type RunSnapshot = {
 	command: string;
 	logPath: string;
 	status: RunStatus;
+	startedAt: number;
 	exitCode?: number;
 	signal?: NodeJS.Signals;
 };
@@ -81,7 +82,7 @@ export class MonitorManager {
 			run.output.append(buffer.subarray(0, length));
 		};
 		const run: RunRecord = {
-			id, command: options.command, logPath, status: "running", process: child,
+			id, command: options.command, logPath, status: "running", startedAt: Date.now(), process: child,
 			outputFile: file, readOutput, outputTimer: setInterval(readOutput, 100),
 			output: new LiveOutput((chunk) => {
 				if (chunk.suppressed) {
@@ -134,7 +135,7 @@ export class MonitorManager {
 	}
 
 	private snapshot(run: RunRecord): RunSnapshot {
-		const { id, command, logPath, status, exitCode, signal } = run;
-		return { id, command, logPath, status, exitCode, signal };
+		const { id, command, logPath, status, startedAt, exitCode, signal } = run;
+		return { id, command, logPath, status, startedAt, exitCode, signal };
 	}
 }

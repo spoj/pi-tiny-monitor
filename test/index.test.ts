@@ -51,12 +51,12 @@ const cleanups: Array<() => Promise<void>> = [];
 
 async function setup() {
 	const { default: piTinyMonitor } = await import("../src/index.ts");
-	const pi = { registerTool: vi.fn(), on: vi.fn(), sendMessage: vi.fn() };
+	const pi = { registerTool: vi.fn(), registerCommand: vi.fn(), on: vi.fn(), sendMessage: vi.fn() };
 	const ctx = {
 		cwd: "/tmp/parent",
 		isProjectTrusted: () => true,
 		isIdle: vi.fn(() => true),
-		ui: { setStatus: vi.fn() },
+		ui: { setStatus: vi.fn(), notify: vi.fn(), select: vi.fn(async (_title: string, items: string[]) => items[0]) },
 	};
 	piTinyMonitor(pi as never);
 	const event = (name: string) => pi.on.mock.calls.find(([type]) => type === name)?.[1];
@@ -153,6 +153,18 @@ describe("monitor extension", () => {
 		expect([tools.monitor.exposure, tools.monitor_stop.exposure]).toEqual(["model-only", "model-only"]);
 		expect(pi.on.mock.calls.map(([name]) => name)).toEqual(["message_start", "agent_settled", "session_start", "session_compact", "session_shutdown"]);
 		expect(mocks.managers).toHaveLength(1);
+	});
+
+	it("lists running monitors and stops a picked one", async () => {
+		const { pi, ctx } = await setup();
+		const { handler } = pi.registerCommand.mock.calls.find(([name]) => name === "monitors")![1];
+		await handler("", ctx);
+		expect(ctx.ui.notify).toHaveBeenLastCalledWith("No monitors running", "info");
+		mocks.runs.push({ ...mocks.runSnapshot, command: "printf hello\nprintf more", startedAt: Date.now() - 120_000 });
+		await handler("", ctx);
+		expect(ctx.ui.notify).toHaveBeenLastCalledWith("run-1 · 2m · printf hello", "info");
+		await handler("stop", ctx);
+		expect(mocks.stop).toHaveBeenCalledWith("run-1");
 	});
 
 	it("starts monitors in the session cwd", async () => {
