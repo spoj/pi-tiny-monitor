@@ -43,10 +43,10 @@ function registerTools(pi: ExtensionAPI, manager: MonitorManager): void {
 	pi.registerTool({
 		name: "monitor",
 		label: "Monitor",
-		description: "Runs a background shell command and delivers bounded output updates while it runs, then a final status.",
+		description: "Runs a shell command and wakes you up when it outputs to stdout.",
 		promptSnippet: "Run a background shell command with live output updates",
 		promptGuidelines: [
-			"Use monitor for long-running or noisy shell commands when the current turn should remain available.",
+			"Use monitor instead of busy-polls and wait-and-check patterns in bash. Monitor is strictly better because it wakes you up faster and stays quiet otherwise.",
 		],
 		parameters: monitorTool,
 		// Updates arrive as later messages, not in the result, so codemode scripts cannot use monitors.
