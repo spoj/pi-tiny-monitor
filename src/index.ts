@@ -116,7 +116,8 @@ export default function piTinyMonitor(pi: ExtensionAPI): void {
 			onOutput: (run, chunk) => notify(liveText(run, chunk)),
 		});
 		manager = current;
-		registerTools(pi, current);
+		// Print and JSON modes exit once the agent finishes, which would stop monitors before they report.
+		if (ctx.mode !== "print" && ctx.mode !== "json") registerTools(pi, current);
 	});
 
 	// Compaction can summarize away the calls that started monitors, so restate the ones still running.

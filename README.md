@@ -9,7 +9,7 @@ A Pi package for session-owned background commands.
 
 `/monitors` lists running monitors with their age and command, and `/monitors stop` picks one to stop.
 
-Only the model can call these tools; Pi's codemode scripts cannot, because updates arrive as later messages rather than in the tool result.
+Only the model can call these tools; Pi's codemode scripts cannot, because updates arrive as later messages rather than in the tool result. Print and JSON modes (`pi -p`, `--mode json`) don't get the tools at all: Pi exits once the agent finishes, which would stop monitors before they report.
 
 Each run writes stdout and stderr to one log, `pi-run-<id>.log` in the OS temp directory (beside Pi's own `pi-bash-<id>.log` files), without a size cap. The process writes to the log's file descriptor directly and the manager reads the log about every 100 ms; there is no pipe, tee, or drain process.
 

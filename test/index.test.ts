@@ -49,10 +49,11 @@ function output(text: string, id = "run-1") {
 
 const cleanups: Array<() => Promise<void>> = [];
 
-async function setup() {
+async function setup(mode = "tui") {
 	const { default: piTinyMonitor } = await import("../src/index.ts");
 	const pi = { registerTool: vi.fn(), registerCommand: vi.fn(), on: vi.fn(), sendMessage: vi.fn() };
 	const ctx = {
+		mode,
 		cwd: "/tmp/parent",
 		isProjectTrusted: () => true,
 		isIdle: vi.fn(() => true),
@@ -97,7 +98,7 @@ async function setupAgent(...extensionFactories: Array<(pi: ExtensionAPI) => voi
 		sessionManager: SessionManager.inMemory(cwd), tools: [],
 	});
 	const errors: unknown[] = [];
-	await session.bindExtensions({ onError: (error) => { errors.push(error); } });
+	await session.bindExtensions({ mode: "tui", onError: (error) => { errors.push(error); } });
 	const requests: Context[] = [];
 	const streams: ReturnType<typeof createAssistantMessageEventStream>[] = [];
 	const messageStarts: unknown[] = [];
@@ -153,6 +154,10 @@ describe("monitor extension", () => {
 		expect([tools.monitor.exposure, tools.monitor_stop.exposure]).toEqual(["model-only", "model-only"]);
 		expect(pi.on.mock.calls.map(([name]) => name)).toEqual(["message_start", "agent_settled", "session_start", "session_compact", "session_shutdown"]);
 		expect(mocks.managers).toHaveLength(1);
+	});
+
+	it("registers no tools in print and JSON modes", async () => {
+		for (const mode of ["print", "json"]) expect((await setup(mode)).tools).toEqual({});
 	});
 
 	it("lists running monitors and stops a picked one", async () => {
