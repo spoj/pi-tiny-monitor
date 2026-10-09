@@ -180,7 +180,7 @@ describe("monitor extension", () => {
 		} as never);
 		expect(mocks.run).toHaveBeenCalledOnce();
 		expect(mocks.run.mock.calls[0][1]).toMatchObject({ command: "printf hello", cwd: "/tmp/parent" });
-		expect(result.content[0].text).toContain("Monitor started");
+		expect(result.content[0].text).toContain("Started run-1.");
 	});
 
 	it("stops monitors by ID", async () => {

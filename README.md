@@ -4,7 +4,7 @@ A Pi package for session-owned background commands.
 
 ## Monitor tools
 
-- `monitor({ command })` runs the command in the current Pi cwd with Pi's configured shell, trusted project settings, and shell command prefix. It returns immediately with a run ID and log path.
+- `monitor({ command })` runs the command in the current Pi cwd with Pi's configured shell, trusted project settings, and shell command prefix. It returns immediately with a run ID.
 - `monitor_stop({ id })` stops a run and its process tree. Pending output is flushed, but an explicit stop does not send an exit wake-up.
 
 `/monitors` lists running monitors with their age and command, and `/monitors stop` picks one to stop.

@@ -43,10 +43,10 @@ function registerTools(pi: ExtensionAPI, manager: MonitorManager): void {
 	pi.registerTool({
 		name: "monitor",
 		label: "Monitor",
-		description: "Runs a shell command and wakes you up when it outputs to stdout.",
-		promptSnippet: "Run a background shell command with live output updates",
+		description: "Runs a shell command in the background and returns at once. What the command prints arrives as later messages, followed by its exit status.",
+		promptSnippet: "Run a shell command in the background; its output arrives as later messages",
 		promptGuidelines: [
-			"Use monitor instead of busy-polls and wait-and-check patterns in bash. Monitor is strictly better because it wakes you up faster and stays quiet otherwise.",
+			"Use monitor for long-running commands and anything you would otherwise poll. A monitor's messages arrive after your current tool calls finish, or start a new turn once you have ended yours, so end your turn to wait for them; a blocking call only delays them.",
 		],
 		parameters: monitorTool,
 		// Updates arrive as later messages, not in the result, so codemode scripts cannot use monitors.
@@ -65,7 +65,7 @@ function registerTools(pi: ExtensionAPI, manager: MonitorManager): void {
 				},
 			);
 			return {
-				content: [{ type: "text", text: `Monitor started.\n\nID: ${run.id}\nLog: ${run.logPath}` }],
+				content: [{ type: "text", text: `Started ${run.id}. Its output arrives as later messages, which wake you if you have ended your turn.` }],
 				details: undefined,
 			};
 		},
@@ -74,7 +74,7 @@ function registerTools(pi: ExtensionAPI, manager: MonitorManager): void {
 	pi.registerTool({
 		name: "monitor_stop",
 		label: "Monitor Stop",
-		description: "Stops a running monitor by ID.",
+		description: "Stops a running monitor and its processes. No exit status follows.",
 		parameters: monitorStopTool,
 		exposure: "model-only",
 		async execute(_toolCallId, params) {
