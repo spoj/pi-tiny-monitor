@@ -3,7 +3,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { closeSync, fstatSync, openSync, readSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { stopProcessTree } from "./process.ts";
+import { RUN_VARIABLE, stopProcessTree } from "./process.ts";
 import { LiveOutput, type LiveChunk } from "./live-output.ts";
 
 export type RunStatus = "running" | "completed" | "failed" | "stopped";
@@ -53,6 +53,7 @@ export class MonitorManager {
 		try {
 			child = spawn(argv[0], argv.slice(1), {
 				cwd: options.cwd,
+				env: { ...process.env, [RUN_VARIABLE]: id },
 				stdio: [options.stdin === undefined ? "ignore" : "pipe", log, log],
 				detached: process.platform !== "win32",
 				windowsHide: true,
@@ -121,7 +122,7 @@ export class MonitorManager {
 		if (run.finishing) return run.finishing;
 		clearInterval(run.outputTimer);
 		run.finishing = Promise.resolve().then(async () => {
-			await stopProcessTree(run.process);
+			await stopProcessTree(run.process, run.id);
 			run.readOutput?.();
 			const chunk = run.output.finish();
 			run.status = status;

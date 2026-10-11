@@ -2,6 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { getShellConfig } from "@earendil-works/pi-coding-agent";
 import { MonitorManager, type RunSnapshot } from "../src/manager.ts";
 
 type CapturedOutput = {
@@ -268,7 +269,7 @@ describe("monitor runs", () => {
 		expect(harness.manager.list()).toEqual([]);
 	});
 
-	it.skipIf(process.platform === "win32")("kills descendants during shutdown", async () => {
+	it("kills descendants during shutdown, also behind a forked shell", async () => {
 		const harness = createHarness();
 		const childReady = join(harness.directory, "descendant-ready");
 		const leaked = join(harness.directory, "descendant-leaked");
@@ -278,11 +279,16 @@ describe("monitor runs", () => {
 			"process.on('SIGTERM', () => {});",
 			`setTimeout(() => fs.writeFileSync(${JSON.stringify(leaked)}, 'leaked'), 1500);`,
 		].join(" ");
-		await start(harness, [
+		const parent = join(harness.directory, "parent.cjs");
+		writeFileSync(parent, [
 			"const { spawn } = require('node:child_process');",
 			`spawn(process.execPath, ['-e', ${JSON.stringify(child)}], { stdio: 'inherit' }).unref();`,
 			"setInterval(() => {}, 1000);",
 		].join(" "));
+		// On Windows, the background job's fork execs sh, another MSYS program, so sh's Windows parent exits at once and taskkill /t cannot reach it.
+		const shell = getShellConfig();
+		const command = `sh -c '"${process.execPath.replaceAll("\\", "/")}" "${parent.replaceAll("\\", "/")}"' & wait`;
+		harness.manager.run([shell.shell, ...shell.args, command], { command, cwd: harness.directory });
 		await waitFor(() => existsSync(childReady));
 
 		await harness.manager.shutdown();
