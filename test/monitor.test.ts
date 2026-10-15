@@ -280,7 +280,8 @@ describe("monitor runs", () => {
 		].join(" ");
 		await start(harness, [
 			"const { spawn } = require('node:child_process');",
-			`spawn(process.execPath, ['-e', ${JSON.stringify(child)}], { stdio: 'inherit' }).unref();`,
+			// Commands such as `timeout` and child `pi` bash tools put their work in a new process group.
+			`spawn(process.execPath, ['-e', ${JSON.stringify(child)}], { detached: true, stdio: 'inherit' }).unref();`,
 			"setInterval(() => {}, 1000);",
 		].join(" "));
 		await waitFor(() => existsSync(childReady));
