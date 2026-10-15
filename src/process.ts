@@ -1,7 +1,10 @@
-import { execFile, type ChildProcess } from "node:child_process";
+import { execFile, execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { join } from "node:path";
 
 const KILL_GRACE_MS = 1_000;
+const activePids = new Set<number>();
+let watchdog: ChildProcess | undefined;
+let exitHookInstalled = false;
 
 function processGone(target: number): boolean {
 	try {
@@ -12,22 +15,28 @@ function processGone(target: number): boolean {
 	}
 }
 
-async function collectTargets(pids: Set<number>, groups: Set<number>): Promise<number[]> {
-	const stdout = await new Promise<string>((resolve) => {
-		execFile("ps", ["-A", "-o", "pid=,ppid=,pgid="], { encoding: "utf8" }, (_error, out) => resolve(out));
-	});
-	const rows = stdout.trim().split("\n").filter(Boolean).map((line) => line.trim().split(/\s+/).map(Number));
+function parseTargets(stdout: string, pids: Set<number>, groups: Set<number>, sessions: Set<string>): number[] {
+	const rows = stdout.trim().split("\n").filter(Boolean).map((line) => line.trim().split(/\s+/));
 	let size = 0;
-	while (pids.size + groups.size !== size) {
-		size = pids.size + groups.size;
-		for (const [pid, ppid, pgid] of rows) {
-			if (pids.has(pid) || pids.has(ppid) || groups.has(pgid)) {
+	while (pids.size + groups.size + sessions.size !== size) {
+		size = pids.size + groups.size + sessions.size;
+		for (const [pidText, ppidText, pgidText, sess] of rows) {
+			const pid = Number(pidText), ppid = Number(ppidText), pgid = Number(pgidText);
+			if (pids.has(pid) || pids.has(ppid) || groups.has(pgid) || sessions.has(sess)) {
 				pids.add(pid);
 				groups.add(pgid);
+				if (sess && sess !== "0" && sess !== "-") sessions.add(sess);
 			}
 		}
 	}
 	return [...Array.from(groups, (group) => -group), ...pids];
+}
+
+async function collectTargets(pids: Set<number>, groups: Set<number>, sessions: Set<string>): Promise<number[]> {
+	const stdout = await new Promise<string>((resolve) => {
+		execFile("ps", ["-A", "-o", "pid=,ppid=,pgid=,sess="], { encoding: "utf8" }, (_error, out) => resolve(out));
+	});
+	return parseTargets(stdout, pids, groups, sessions);
 }
 
 function terminate(targets: number[], signal: NodeJS.Signals): void {
@@ -38,39 +47,121 @@ function terminate(targets: number[], signal: NodeJS.Signals): void {
 	}
 }
 
+function killTreesSync(roots: Set<number>, runSync: typeof execFileSync, joinPath: typeof join): void {
+	if (!roots.size) return;
+	if (process.platform === "win32") {
+		const taskkill = joinPath(process.env.SystemRoot ?? "C:\\Windows", "System32", "taskkill.exe");
+		for (const pid of roots) {
+			try {
+				runSync(taskkill, ["/pid", String(pid), "/t", "/f"], { stdio: "ignore", windowsHide: true });
+			} catch {}
+		}
+		return;
+	}
+	const pids = new Set(roots);
+	const groups = new Set(roots);
+	const sessions = new Set(Array.from(roots, String));
+	const stdout = runSync("ps", ["-A", "-o", "pid=,ppid=,pgid=,sess="], { encoding: "utf8" });
+	terminate(parseTargets(stdout, pids, groups, sessions), "SIGKILL");
+}
+
+function stopWatchdog(): void {
+	if (!watchdog) return;
+	watchdog.stdin?.destroy();
+	watchdog.kill("SIGKILL");
+	watchdog = undefined;
+}
+
+const watchdogScript = [
+	`const { execFileSync } = require("node:child_process");`,
+	`const { join } = require("node:path");`,
+	parseTargets.toString(),
+	terminate.toString(),
+	killTreesSync.toString(),
+	`const roots = new Set();`,
+	`let rest = "";`,
+	`process.stdin.setEncoding("utf8").on("data", (chunk) => {`,
+	`\tconst lines = (rest + chunk).split("\\n");`,
+	`\trest = lines.pop();`,
+	`\tfor (const line of lines) {`,
+	`\t\tconst pid = Number(line.slice(1));`,
+	`\t\tif (line[0] === "+") roots.add(pid);`,
+	`\t\telse roots.delete(pid);`,
+	`\t}`,
+	`}).on("end", () => {`,
+	`\tkillTreesSync(roots, execFileSync, join);`,
+	`\tprocess.exit(0);`,
+	`});`,
+].join("\n");
+
+export function watchProcess(pid: number): void {
+	activePids.add(pid);
+	if (!exitHookInstalled) {
+		exitHookInstalled = true;
+		process.once("exit", () => {
+			stopWatchdog();
+			killTreesSync(activePids, execFileSync, join);
+		});
+	}
+	if (!watchdog) {
+		watchdog = spawn(process.execPath, ["-e", watchdogScript], {
+			stdio: ["pipe", "ignore", "ignore"],
+			detached: process.platform !== "win32",
+			windowsHide: true,
+		});
+		watchdog.on("error", () => {});
+		watchdog.stdin!.on("error", () => {});
+		watchdog.unref();
+	}
+	watchdog.stdin!.write(`+${pid}\n`);
+}
+
+function unwatchProcess(pid: number): void {
+	activePids.delete(pid);
+	if (!activePids.size) stopWatchdog();
+	else watchdog?.stdin?.write(`-${pid}\n`);
+}
+
 export async function stopProcessTree(child: ChildProcess): Promise<void> {
 	child.stdin?.destroy();
 	const pid = child.pid!;
-
-	if (process.platform === "win32") {
-		await new Promise<void>((resolve) => {
-			execFile(
-				join(process.env.SystemRoot ?? "C:\\Windows", "System32", "taskkill.exe"),
-				["/pid", String(pid), "/t", "/f"],
-				{ windowsHide: true },
-				(error: Error | null) => {
-					if (error) child.kill("SIGTERM");
-					resolve();
-				},
-			);
-		});
-		return;
-	}
-
-	const pids = new Set([pid]);
-	const groups = new Set([pid]);
-	let targets = [-pid, pid];
-	if (targets.every(processGone)) return;
-	targets = await collectTargets(pids, groups);
-	terminate(targets, "SIGTERM");
-	const startedAt = Date.now();
-	while (true) {
-		if (targets.every(processGone)) return;
-		if (Date.now() - startedAt >= KILL_GRACE_MS) {
-			targets = await collectTargets(pids, groups);
-			terminate(targets, "SIGKILL");
+	try {
+		if (process.platform === "win32") {
+			await new Promise<void>((resolve) => {
+				execFile(
+					join(process.env.SystemRoot ?? "C:\\Windows", "System32", "taskkill.exe"),
+					["/pid", String(pid), "/t", "/f"],
+					{ windowsHide: true },
+					(error: Error | null) => {
+						if (error) child.kill("SIGTERM");
+						resolve();
+					},
+				);
+			});
 			return;
 		}
-		await new Promise<void>((resolve) => setTimeout(resolve, 25));
+
+		const pids = new Set([pid]);
+		const groups = new Set([pid]);
+		const sessions = new Set([String(pid)]);
+		let targets = await collectTargets(pids, groups, sessions);
+		if (targets.every(processGone)) return;
+		terminate(targets, "SIGTERM");
+		const startedAt = Date.now();
+		while (true) {
+			if (targets.every(processGone)) {
+				targets = await collectTargets(pids, groups, sessions);
+				if (targets.every(processGone)) return;
+				terminate(targets, "SIGTERM");
+			}
+			if (Date.now() - startedAt >= KILL_GRACE_MS) {
+				targets = await collectTargets(pids, groups, sessions);
+				terminate(targets, "SIGKILL");
+				return;
+			}
+			await new Promise<void>((resolve) => setTimeout(resolve, 25));
+		}
+	} finally {
+		unwatchProcess(pid);
 	}
 }

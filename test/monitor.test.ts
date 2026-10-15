@@ -1,6 +1,8 @@
+import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { MonitorManager, type RunSnapshot } from "../src/manager.ts";
 
@@ -272,22 +274,52 @@ describe("monitor runs", () => {
 		const harness = createHarness();
 		const childReady = join(harness.directory, "descendant-ready");
 		const leaked = join(harness.directory, "descendant-leaked");
-		const child = [
+		const leaf = [
 			"const fs = require('node:fs');",
 			`fs.writeFileSync(${JSON.stringify(childReady)}, 'ready');`,
 			"process.on('SIGTERM', () => {});",
 			`setTimeout(() => fs.writeFileSync(${JSON.stringify(leaked)}, 'leaked'), 1500);`,
 		].join(" ");
+		const middle = [
+			"const { spawn } = require('node:child_process');",
+			`spawn(process.execPath, ['-e', ${JSON.stringify(leaf)}], { detached: true, stdio: 'inherit' }).unref();`,
+			"setInterval(() => {}, 1000);",
+		].join(" ");
 		await start(harness, [
 			"const { spawn } = require('node:child_process');",
-			// Commands such as `timeout` and child `pi` bash tools put their work in a new process group.
-			`spawn(process.execPath, ['-e', ${JSON.stringify(child)}], { detached: true, stdio: 'inherit' }).unref();`,
+			// Commands such as `timeout` and child `pi` bash tools put their work in new process groups.
+			`spawn(process.execPath, ['-e', ${JSON.stringify(middle)}], { detached: true, stdio: 'inherit' }).unref();`,
 			"setInterval(() => {}, 1000);",
 		].join(" "));
 		await waitFor(() => existsSync(childReady));
 
 		await harness.manager.shutdown();
 		await expectNoFile(leaked);
+	}, 10_000);
+
+	it.skipIf(process.platform === "win32")("kills descendants when the parent process is killed", async () => {
+		const harness = createHarness();
+		const childReady = join(harness.directory, "sigkill-ready");
+		const leaked = join(harness.directory, "sigkill-leaked");
+		const managerUrl = pathToFileURL(join(import.meta.dirname, "../src/manager.ts")).href;
+		const child = [
+			"const fs = require('node:fs');",
+			`fs.writeFileSync(${JSON.stringify(childReady)}, 'ready');`,
+			"process.on('SIGTERM', () => {});",
+			`setTimeout(() => fs.writeFileSync(${JSON.stringify(leaked)}, 'leaked'), 800);`,
+		].join(" ");
+		const hostScript = join(harness.directory, "host.mjs");
+		writeFileSync(hostScript, [
+			`import { MonitorManager } from ${JSON.stringify(managerUrl)};`,
+			"const manager = new MonitorManager({ onUpdate: () => {}, onOutput: () => {} });",
+			`manager.run([process.execPath, '-e', ${JSON.stringify(`const { spawn } = require('node:child_process'); spawn(process.execPath, ['-e', ${JSON.stringify(child)}], { detached: true, stdio: 'ignore' }).unref(); setInterval(() => {}, 1000);`)}], { command: 'work', cwd: ${JSON.stringify(harness.directory)} });`,
+			"setInterval(() => {}, 1000);",
+		].join("\n"));
+		const host = spawn(process.execPath, [hostScript], { stdio: "ignore" });
+		await waitFor(() => existsSync(childReady));
+
+		host.kill("SIGKILL");
+		await expectNoFile(leaked, 1_200);
 	}, 10_000);
 
 	it("passes stdin and closes the stream", async () => {

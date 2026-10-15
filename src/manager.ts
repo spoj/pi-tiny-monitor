@@ -3,7 +3,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { closeSync, fstatSync, openSync, readSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { stopProcessTree } from "./process.ts";
+import { stopProcessTree, watchProcess } from "./process.ts";
 import { LiveOutput, type LiveChunk } from "./live-output.ts";
 
 export type RunStatus = "running" | "completed" | "failed" | "stopped";
@@ -34,9 +34,12 @@ type ManagerOptions = {
 
 export class MonitorManager {
 	private readonly runs = new Map<string, RunRecord>();
+	private readonly options: ManagerOptions;
 	private shuttingDown = false;
 
-	constructor(private readonly options: ManagerOptions) {}
+	constructor(options: ManagerOptions) {
+		this.options = options;
+	}
 
 	list(): RunSnapshot[] {
 		return Array.from(this.runs.values(), (run) => this.snapshot(run));
@@ -66,6 +69,7 @@ export class MonitorManager {
 			rmSync(logPath);
 			throw new Error(`Could not start ${argv[0]}`);
 		}
+		watchProcess(child.pid);
 		if (options.stdin !== undefined) {
 			child.stdin!.on("error", () => {});
 			child.stdin!.end(options.stdin);
