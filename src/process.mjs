@@ -90,6 +90,8 @@ export function watchProcess(child, id) {
 			stdio: ["pipe", "ignore", "ignore"],
 			detached: process.platform !== "win32",
 			windowsHide: true,
+			// Pi's standalone Bun build runs Pi itself unless told to act as Bun; Node ignores this.
+			env: { ...process.env, BUN_BE_BUN: "1" },
 		});
 		watchdog.on("error", () => {});
 		watchdog.stdin.on("error", () => {});
