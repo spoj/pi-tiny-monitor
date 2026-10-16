@@ -314,11 +314,16 @@ describe("monitor runs", () => {
 			"process.on('SIGTERM', () => {});",
 			`setTimeout(() => fs.writeFileSync(${JSON.stringify(leaked)}, 'leaked'), 1500);`,
 		].join(" ");
+		const parent = join(harness.directory, "sigkill-parent.cjs");
+		writeFileSync(parent, `require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(child)}], { detached: true, stdio: 'ignore' }).unref(); setInterval(() => {}, 1000);`);
+		// On Windows, Node's job object ends the run's shell along with Pi, so the watchdog reaches the rest through sh, which carries the run's variable.
+		const shell = getShellConfig();
+		const command = `sh -c '"${process.execPath.replaceAll("\\", "/")}" "${parent.replaceAll("\\", "/")}"' & wait`;
 		const hostScript = join(harness.directory, "host.mjs");
 		writeFileSync(hostScript, [
 			`import { MonitorManager } from ${JSON.stringify(managerUrl)};`,
 			"const manager = new MonitorManager({ onUpdate: () => {}, onOutput: () => {} });",
-			`manager.run([process.execPath, '-e', ${JSON.stringify(`const { spawn } = require('node:child_process'); spawn(process.execPath, ['-e', ${JSON.stringify(child)}], { detached: true, stdio: 'ignore' }).unref(); setInterval(() => {}, 1000);`)}], { command: 'work', cwd: ${JSON.stringify(harness.directory)} });`,
+			`manager.run(${JSON.stringify([shell.shell, ...shell.args, command])}, { command: 'work', cwd: ${JSON.stringify(harness.directory)} });`,
 			"setInterval(() => {}, 1000);",
 		].join("\n"));
 		const host = spawn(process.execPath, [hostScript], { stdio: "ignore" });

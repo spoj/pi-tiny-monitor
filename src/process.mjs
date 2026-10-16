@@ -88,7 +88,8 @@ export function watchProcess(child, id) {
 	if (!watchdog) {
 		watchdog = spawn(process.execPath, [fileURLToPath(new URL("./watchdog.mjs", import.meta.url))], {
 			stdio: ["pipe", "ignore", "ignore"],
-			detached: process.platform !== "win32",
+			// On Windows, Node's job object ends attached children when Pi exits.
+			detached: true,
 			windowsHide: true,
 			// Pi's standalone Bun build runs Pi itself unless told to act as Bun; Node ignores this.
 			env: { ...process.env, BUN_BE_BUN: "1" },

@@ -26,7 +26,7 @@ All ready updates share one pending steering message. Arrivals join that message
 
 Stopping a run ends its process tree. On Unix that is every process linked to the run by parent, process group, or session, so commands that start their own groups, such as `timeout` or a child Pi's bash tool, are included; they get `SIGTERM`, then `SIGKILL` after one second. On Windows, `taskkill /t` ends the tree together with the Git Bash processes that carry the run's `PI_TINY_MONITOR_RUN` variable.
 
-At most eight monitors may be active in one session. Session shutdown, reload, and replacement stop owned runs silently. If Pi exits without shutting down, even by `SIGKILL`, a watchdog process that runs alongside active monitors stops them. Logs stay in the temp directory.
+At most eight monitors may be active in one session. Session shutdown, reload, and replacement stop owned runs silently. If Pi exits without shutting down, even by `SIGKILL`, a watchdog process that runs alongside active monitors stops them. On Windows, Node ends each run's shell together with Pi, which strands the native programs that shell started directly; the watchdog still stops the Git Bash processes that carry the run's variable and everything below them. Logs stay in the temp directory.
 
 Compaction can summarize away the calls that started monitors, so after each compaction one message lists the monitors still running with their IDs, logs, and commands. During a run it arrives as steering; an idle session gets it appended without waking.
 
