@@ -8,6 +8,7 @@
     "skipLibCheck": true,
     "allowImportingTsExtensions": true,
     "allowJs": true,
+    "erasableSyntaxOnly": true,
     "types": ["node"]
   },
   "include": ["**/*.ts"]
