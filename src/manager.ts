@@ -3,7 +3,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { closeSync, fstatSync, openSync, readSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { RUN_VARIABLE, stopProcessTree, watchProcess } from "./process.ts";
+import { RUN_VARIABLE, stopProcessTree, watchProcess } from "./process.mjs";
 import { LiveOutput, type LiveChunk } from "./live-output.ts";
 
 export type RunStatus = "running" | "completed" | "failed" | "stopped";
@@ -70,7 +70,7 @@ export class MonitorManager {
 			rmSync(logPath);
 			throw new Error(`Could not start ${argv[0]}`);
 		}
-		watchProcess(child.pid);
+		watchProcess(child, id);
 		if (options.stdin !== undefined) {
 			child.stdin!.on("error", () => {});
 			child.stdin!.end(options.stdin);

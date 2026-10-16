@@ -303,7 +303,7 @@ describe("monitor runs", () => {
 		await expectNoFile(leaked);
 	}, 10_000);
 
-	it.skipIf(process.platform === "win32")("kills descendants when the parent process is killed", async () => {
+	it("kills descendants when Pi is killed", async () => {
 		const harness = createHarness();
 		const childReady = join(harness.directory, "sigkill-ready");
 		const leaked = join(harness.directory, "sigkill-leaked");
@@ -312,7 +312,7 @@ describe("monitor runs", () => {
 			"const fs = require('node:fs');",
 			`fs.writeFileSync(${JSON.stringify(childReady)}, 'ready');`,
 			"process.on('SIGTERM', () => {});",
-			`setTimeout(() => fs.writeFileSync(${JSON.stringify(leaked)}, 'leaked'), 800);`,
+			`setTimeout(() => fs.writeFileSync(${JSON.stringify(leaked)}, 'leaked'), 1500);`,
 		].join(" ");
 		const hostScript = join(harness.directory, "host.mjs");
 		writeFileSync(hostScript, [
@@ -325,7 +325,7 @@ describe("monitor runs", () => {
 		await waitFor(() => existsSync(childReady));
 
 		host.kill("SIGKILL");
-		await expectNoFile(leaked, 1_200);
+		await expectNoFile(leaked);
 	}, 10_000);
 
 	it("passes stdin and closes the stream", async () => {
