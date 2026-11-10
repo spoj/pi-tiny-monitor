@@ -22,6 +22,7 @@ type Harness = {
 	directory: string;
 	manager: MonitorManager;
 	outputs: CapturedOutput[];
+	logs: Set<string>;
 };
 
 const harnesses: Harness[] = [];
@@ -29,11 +30,13 @@ const harnesses: Harness[] = [];
 function createHarness(): Harness {
 	const directory = mkdtempSync(join(tmpdir(), "pi-tiny-monitor-run-"));
 	const outputs: CapturedOutput[] = [];
+	const logs = new Set<string>();
 	const manager = new MonitorManager({
-		onUpdate: () => undefined,
+		// The manager forgets finished runs, so note each log while its run is listed.
+		onUpdate: () => { for (const run of manager.list()) logs.add(run.logPath); },
 		onOutput: (run, chunk) => outputs.push({ run, chunk }),
 	});
-	const harness = { directory, manager, outputs };
+	const harness = { directory, manager, outputs, logs };
 	harnesses.push(harness);
 	return harness;
 }
@@ -45,10 +48,6 @@ function start(harness: Harness, source: string, stdin?: string): RunSnapshot {
 	const script = join(harness.directory, `script-${scripts++}.cjs`);
 	writeFileSync(script, source);
 	return harness.manager.run([process.execPath, script], { command: script, cwd: harness.directory, ...(stdin === undefined ? {} : { stdin }) });
-}
-
-function status(manager: MonitorManager, id: string): RunSnapshot {
-	return manager.list().find((run) => run.id === id)!;
 }
 
 function outputsFor(outputs: CapturedOutput[], id: string): CapturedOutput[] {
@@ -64,8 +63,9 @@ async function waitFor(condition: () => boolean, timeout = 5_000): Promise<void>
 }
 
 async function finish(harness: Harness, id: string, timeout = 5_000): Promise<RunSnapshot> {
-	await waitFor(() => outputsFor(harness.outputs, id).some(({ chunk }) => chunk.streamEnded === true), timeout);
-	return status(harness.manager, id);
+	const ended = () => outputsFor(harness.outputs, id).find(({ chunk }) => chunk.streamEnded === true);
+	await waitFor(() => ended() !== undefined, timeout);
+	return ended()!.run;
 }
 
 async function expectNoFile(path: string, duration = 2_200): Promise<void> {
@@ -80,7 +80,7 @@ async function expectNoFile(path: string, duration = 2_200): Promise<void> {
 afterEach(async () => {
 	for (const harness of harnesses.splice(0)) {
 		await harness.manager.shutdown();
-		for (const run of harness.manager.list()) rmSync(run.logPath, { force: true });
+		for (const log of harness.logs) rmSync(log, { force: true });
 		rmSync(harness.directory, { recursive: true, force: true });
 	}
 });
@@ -194,7 +194,7 @@ describe("monitor runs", () => {
 
 		await harness.manager.stop(started.id);
 		const chunks = outputsFor(harness.outputs, started.id);
-		expect(status(harness.manager, started.id)).toMatchObject({ status: "stopped" });
+		expect(harness.manager.list()).toEqual([]);
 		expect(chunks).toHaveLength(1);
 		expect(chunks[0].chunk).toMatchObject({
 			text: "pending",
@@ -203,7 +203,7 @@ describe("monitor runs", () => {
 		});
 		expect(chunks[0].chunk.streamEnded).not.toBe(true);
 		await expect(harness.manager.stop(started.id)).rejects.toThrow("not running");
-		await expect(harness.manager.stop("run-unknown")).rejects.toThrow("Unknown monitor");
+		await expect(harness.manager.stop("run-unknown")).rejects.toThrow("not running");
 	});
 
 	it("stays silent while shutting down", async () => {
@@ -218,7 +218,7 @@ describe("monitor runs", () => {
 		await new Promise((resolve) => setImmediate(resolve));
 
 		await harness.manager.shutdown();
-		expect(status(harness.manager, started.id)).toMatchObject({ status: "stopped" });
+		expect(harness.manager.list()).toEqual([]);
 		expect(harness.outputs).toEqual([]);
 	});
 
@@ -243,7 +243,7 @@ describe("monitor runs", () => {
 
 		await waitFor(() => existsSync(ready));
 		await waitFor(() => outputsFor(harness.outputs, started.id).some(({ chunk }) => chunk.suppressed === true), 6_000);
-		expect(status(harness.manager, started.id)).toMatchObject({ status: "running" });
+		expect(harness.manager.list()).toMatchObject([{ id: started.id, status: "running" }]);
 		const result = await finish(harness, started.id);
 		const chunks = outputsFor(harness.outputs, started.id);
 
@@ -259,7 +259,7 @@ describe("monitor runs", () => {
 		const runs = Array.from({ length: 8 }, () => start(harness, "setInterval(() => {}, 1000);"));
 
 		expect(runs).toHaveLength(8);
-		expect(harness.manager.list().filter((run) => run.status === "running")).toHaveLength(8);
+		expect(harness.manager.list()).toHaveLength(8);
 		expect(() => start(harness, "setInterval(() => {}, 1000);")).toThrow(/8/);
 	});
 

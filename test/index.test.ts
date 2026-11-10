@@ -265,7 +265,6 @@ describe("monitor extension", () => {
 
 		mocks.runs.push(
 			mocks.runSnapshot,
-			{ ...mocks.runSnapshot, id: "run-2", command: "make test", status: "completed", exitCode: 0 },
 			{ ...mocks.runSnapshot, id: "run-3", command: "letmeknow --session happy-wren listen", logPath: "/tmp/pi-run-3.log" },
 		);
 		event("session_compact")({}, ctx);

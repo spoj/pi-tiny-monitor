@@ -20,7 +20,7 @@ const monitorStopTool = Type.Object({
 });
 
 function renderStatus(ctx: ExtensionContext, manager: MonitorManager): void {
-	const active = manager.list().filter((run) => run.status === "running").length;
+	const active = manager.list().length;
 	ctx.ui.setStatus(STATUS_KEY, active ? `monitors:${active}` : undefined);
 }
 
@@ -123,7 +123,7 @@ export default function piTinyMonitor(pi: ExtensionAPI): void {
 	// Compaction can summarize away the calls that started monitors, so restate the ones still running.
 	// Without triggerTurn, a steer joins the current run or is appended to an idle session without waking it.
 	pi.on("session_compact", () => {
-		const running = manager?.list().filter((run) => run.status === "running") ?? [];
+		const running = manager?.list() ?? [];
 		if (!running.length) return;
 		const text = [
 			"Monitors still running after compaction:",
@@ -138,7 +138,7 @@ export default function piTinyMonitor(pi: ExtensionAPI): void {
 		description: "List running monitors; /monitors stop picks one to stop",
 		handler: async (args, ctx) => {
 			const now = Date.now();
-			const runs = manager!.list().filter((run) => run.status === "running").map((run) => {
+			const runs = manager!.list().map((run) => {
 				const age = now - run.startedAt;
 				return `${run.id} · ${age < 60_000 ? `${Math.round(age / 1000)}s` : `${Math.round(age / 60_000)}m`} · ${run.command.split("\n")[0].slice(0, 80)}`;
 			});

@@ -33,6 +33,7 @@ type ManagerOptions = {
 };
 
 export class MonitorManager {
+	// Running runs only; a run leaves when it finishes.
 	private readonly runs = new Map<string, RunRecord>();
 	private readonly options: ManagerOptions;
 	private shuttingDown = false;
@@ -46,7 +47,7 @@ export class MonitorManager {
 	}
 
 	run(argv: string[], options: { command: string; cwd: string; stdin?: string }): RunSnapshot {
-		if (this.list().filter((run) => run.status === "running").length >= 8) {
+		if (this.runs.size >= 8) {
 			throw new Error("Maximum of 8 monitors already running");
 		}
 		const id = `run-${randomBytes(3).toString("hex")}`;
@@ -112,8 +113,7 @@ export class MonitorManager {
 
 	async stop(id: string): Promise<void> {
 		const run = this.runs.get(id);
-		if (!run) throw new Error(`Unknown monitor: ${id}`);
-		if (run.finishing) throw new Error(`${id} is not running`);
+		if (!run || run.finishing) throw new Error(`${id} is not running`);
 		await this.finish(run, "stopped");
 	}
 
@@ -130,6 +130,7 @@ export class MonitorManager {
 			run.readOutput?.();
 			const chunk = run.output.finish();
 			run.status = status;
+			this.runs.delete(run.id);
 			closeSync(run.outputFile);
 			if (!this.shuttingDown && (run.status !== "stopped" || chunk?.text)) {
 				this.options.onOutput(this.snapshot(run), {
